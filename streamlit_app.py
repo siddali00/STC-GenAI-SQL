@@ -155,12 +155,14 @@ def classify_user_intent(user_question: str) -> str:
     """Classify user intent to determine if it's data-related, greeting, or irrelevant"""
     try:
         system_prompt = (
-            "You are a classifier for user intents in a data analysis chat system. "
-            "Classify the user's message into one of these categories:\n"
-            "- 'data_query': Questions about data, analytics, sales, revenue, customers, churn, products, regions, etc.\n"
-            "- 'greeting': Greetings, hellos, how are you, etc.\n"
-            "- 'irrelevant': Questions not related to data analysis (weather, sports, personal questions, etc.)\n"
-            "Return ONLY the category name, nothing else."
+            """You are a classifier for user intents in a data analysis chat system. 
+
+            Classify the user's message into one of these categories:
+            - 'data_query': Questions about data, analytics, sales, revenue, customers, churn, products, regions, etc.
+            - 'greeting': Greetings, hellos, how are you, etc.
+            - 'irrelevant': Questions not related to data analysis (weather, sports, personal questions, etc.)
+            
+            Return ONLY the category name, nothing else."""
         )
         
         resp = co.chat(
@@ -183,22 +185,15 @@ def generate_contextual_response(user_question: str, intent: str) -> str:
     try:
         if intent == 'data_query':
             system_prompt = (
-                "You are a helpful business data assistant. The user is asking about business data analysis, "
-                "but you don't have access to their specific data right now. Explain that you can help them "
-                "analyze their sales, customer, and churn data, and ask them to be more specific about what "
-                "they'd like to know. Be friendly and professional."
+                """You are a helpful business data assistant. The user is asking about business data analysis, but you don't have access to their specific data right now. Explain that you can help them analyze their sales, customer, and churn data, and ask them to be more specific about what they'd like to know. Be friendly and professional."""
             )
         elif intent == 'greeting':
             system_prompt = (
-                "You are a friendly business data assistant. The user is greeting you. Respond naturally "
-                "and let them know you can help them analyze their business data including sales, customers, "
-                "and churn metrics. Be conversational and welcoming."
+                """You are a friendly business data assistant. The user is greeting you. Respond naturally and let them know you can help them analyze their business data including sales, customers, and churn metrics. Be conversational and welcoming."""
             )
         else:  # irrelevant
             system_prompt = (
-                "You are a business data assistant. The user is asking about something unrelated to business "
-                "data analysis. Politely acknowledge their question but redirect them to ask about business "
-                "data, sales, customers, or analytics instead. Be friendly but stay focused on your role."
+                "You are a business data assistant. The user is asking about something unrelated to business data analysis. Politely acknowledge their question but redirect them to ask about business data, sales, customers, or analytics instead. Be friendly but stay focused on your role."
             )
         
         resp = co.chat(
@@ -208,7 +203,6 @@ def generate_contextual_response(user_question: str, intent: str) -> str:
                 {"role": "user", "content": user_question}
             ]
         )
-        
         return resp.message.content[0].text.strip()
         
     except Exception as e:
@@ -244,8 +238,7 @@ def generate_sql_query(user_question: str) -> str:
     """Generate SQL query using Cohere API"""
     try:
         system_prompt = (
-            "You are a SQL assistant. Given a natural-language question and a database schema, "
-            "generate a valid PostgreSQL query. Return ONLY the SQL query, no explanation or markdown formatting."
+            "You are a SQL assistant. Given a natural-language question and a database schema, generate a valid PostgreSQL query. Return ONLY the SQL query, no explanation or markdown formatting."
         )
         
         user_prompt = f"{SCHEMA_INFO}\nQuestion: {user_question}"
@@ -376,7 +369,7 @@ def render_sidebar():
         
         st.divider()
         
-        # Display chat sessions
+        # Display chat sessions - removed the info message for empty state
         if st.session_state.chat_sessions:
             # Sort chats by timestamp (newest first)
             sorted_chats = sorted(
@@ -413,7 +406,8 @@ def render_sidebar():
                 st.caption(chat_data["timestamp"].strftime("%m/%d %H:%M"))
                 st.divider()
         else:
-            st.info("No chat history yet. Start a conversation!")
+            # Just show empty space instead of the info message
+            st.markdown("<div style='height: 100px;'></div>", unsafe_allow_html=True)
 
 def main():
     # Initialize chat system
@@ -423,7 +417,7 @@ def main():
     render_sidebar()
     
     # Main chat interface
-    st.title("💬 Chat Assistant")
+    st.title("💬 STC Chat Assistant")
     
     # Display current chat messages
     for message in st.session_state.current_messages:
@@ -458,7 +452,7 @@ def main():
                             st.markdown("**Generated SQL:**")
                             st.code(message["sql_query"], language="sql")
     
-    # Chat input
+    # Chat input with enhanced styling
     if prompt := st.chat_input("Ask me about your business data..."):
         # Process the question and add to current chat
         with st.chat_message("user"):
@@ -467,7 +461,7 @@ def main():
         with st.chat_message("assistant"):
             # Show a temporary placeholder while processing
             placeholder = st.empty()
-            placeholder.markdown("*Processing your question...*")
+            placeholder.markdown('<p class="processing-text">Processing your question...</p>', unsafe_allow_html=True)
             
             # Process the question
             process_user_question(prompt)
@@ -505,4 +499,4 @@ def main():
         st.rerun()
 
 if __name__ == "__main__":
-    main() 
+    main()
