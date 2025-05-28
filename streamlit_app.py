@@ -238,7 +238,7 @@ def generate_sql_query(user_question: str) -> str:
     """Generate SQL query using Cohere API"""
     try:
         system_prompt = (
-            "You are a SQL assistant. Given a natural-language question and a database schema, generate a valid PostgreSQL query. Return ONLY the SQL query, no explanation or markdown formatting."
+            "You are a SQL assistant. Given a natural-language question and a database schema, generate a valid PostgreSQL query. **Use case-insensitive matching (e.g. `ILIKE`) when filtering text columns like `region` or `segment.** Return ONLY the SQL query, no explanation or markdown formatting."
         )
         
         user_prompt = f"{SCHEMA_INFO}\nQuestion: {user_question}"
