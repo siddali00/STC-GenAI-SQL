@@ -276,9 +276,7 @@ def generate_natural_language_response(user_question: str, sql_query: str, df: p
             data_summary += f"Sample data:\n{df.head(5).to_string(index=False)}"
         
         system_prompt = (
-            "You are a friendly business data analyst. Based on a user's question and the query results, "
-            "provide a conversational summary of the findings. Be helpful, insightful, and highlight key "
-            "business insights. Keep it natural and easy to understand."
+            "You are a friendly business data analyst. Based on a user's question and the query results,provide a conversational summary of the findings. Be helpful, insightful, and highlight key business insights. Keep it natural and easy to understand. Keep your answer short and to the point. Do not go into depths explaining the data results. Keep it simple and concise."
         )
         
         user_prompt = f"""
