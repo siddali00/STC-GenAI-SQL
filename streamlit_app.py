@@ -40,6 +40,14 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# ────────────────────────────────────────────────────────────────
+# MODULE SWITCHING
+# ────────────────────────────────────────────────────────────────
+mode = st.sidebar.selectbox(
+    "Choose POC",
+    ["SQL Query Assistant", "Data Incident Explainer"]
+)
+
 # File path for persistent storage
 CHAT_STORAGE_FILE = Path("chat_sessions.pkl")
 
@@ -355,6 +363,298 @@ def process_user_question(user_question: str):
             "success": success
         })
 
+# ────────────────────────────────────────────────────────────────
+# 5) INCIDENT EXPLAINER FUNCTIONS (only this section changes)
+# ────────────────────────────────────────────────────────────────
+
+def fetch_failure(log_id: int):
+    session = SessionLocal()
+    try:
+        # Add debugging - check what's actually in the table
+        print(f"Fetching data for log_id: {log_id}")
+        
+        # First, let's see what columns exist
+        columns_result = session.execute(
+            text("SELECT column_name FROM information_schema.columns WHERE table_name = 'job_logs'")
+        ).fetchall()
+        print(f"Available columns: {[row[0] for row in columns_result]}")
+        
+        # Check if the record exists at all
+        exists_check = session.execute(
+            text("SELECT COUNT(*) FROM job_logs WHERE log_id = :id"),
+            {"id": log_id}
+        ).fetchone()
+        print(f"Records found for log_id {log_id}: {exists_check[0]}")
+        
+        # Get the actual record
+        r = session.execute(
+            text("SELECT * FROM job_logs WHERE log_id = :id"),
+            {"id": log_id}
+        ).fetchone()
+        
+        if r:
+            print(f"Raw result: {dict(r._mapping)}")
+            
+            # Try to get the specific columns you need
+            result = session.execute(
+                text("SELECT log_id, job_name, run_timestamp, message FROM job_logs WHERE log_id=:id"),
+                {"id": log_id}
+            ).fetchone()
+            
+            if result:
+                data = dict(result._mapping)
+                data["run_timestamp"] = data["run_timestamp"].isoformat()
+                print(f"Processed result: {data}")
+                return data
+            else:
+                return {"error": "specific columns not found"}
+        else:
+            return {"error": "record not found"}
+            
+    except Exception as e:
+        print(f"Error in fetch_failure: {str(e)}")
+        return {"error": f"database error: {str(e)}"}
+    finally:
+        session.close()
+
+def lookup_kb(error_message: str):
+    session = SessionLocal()
+    try:
+        r = session.execute(
+            text("SELECT root_cause_en, resolution_en, root_cause_ar, resolution_ar "
+                 "FROM incident_kb WHERE :msg ILIKE error_pattern LIMIT 1"),
+            {"msg": error_message}
+        ).fetchone()
+    finally:
+        session.close()
+    if not r:
+        return {
+            "root_cause_en":"Unknown cause",
+            "resolution_en":"Manual investigation required",
+            "root_cause_ar":"سبب غير معروف",
+            "resolution_ar":"مطلوب تحقيق يدوي"
+        }
+    return dict(r._mapping)
+
+# Function definitions for tools
+functions = [
+    {
+        "name": "fetch_failure",
+        "description": "Retrieve detailed job failure information by log ID including job name, timestamp, and error message",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "log_id": {
+                    "type": "integer",
+                    "description": "The unique identifier for the job log entry"
+                }
+            },
+            "required": ["log_id"]
+        }
+    },
+    {
+        "name": "lookup_kb",
+        "description": "Search knowledge base for root cause analysis and resolution steps based on error message pattern",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "error_message": {
+                    "type": "string",
+                    "description": "The error message to search for in the knowledge base"
+                }
+            },
+            "required": ["error_message"]
+        }
+    }
+]
+
+func_map = {
+    "fetch_failure": fetch_failure,
+    "lookup_kb": lookup_kb
+}
+
+tool_defs = [
+    {
+        "type": "function",
+        "function": {
+            "name": f["name"],
+            "description": f["description"],
+            "parameters": f["parameters"]
+        }
+    }
+    for f in functions
+]
+
+def explain_incident_agent(log_id: int) -> str:
+    """
+    Analyze and explain an incident by fetching log details and providing 
+    root cause analysis with resolution steps.
+    """
+    user_msg = (
+        f"Please analyze incident log ID {log_id}. "
+        f"First, fetch the failure details using the log ID. "
+        f"Then, use the error message to look up root cause and resolution information. "
+        f"Provide a comprehensive explanation including:\n"
+        f"1. Job details (name, timestamp)\n"
+        f"2. Error message analysis\n"
+        f"3. Root cause explanation\n"
+        f"4. Detailed resolution steps\n"
+        f"5. Preventive measures if applicable"
+    )
+    
+    try:
+        # First API call with tools
+        first_response = co.chat(
+            model="command-r-08-2024",
+            messages=[{"role": "user", "content": user_msg}],
+            tools=tool_defs,
+            temperature=0.1
+        )
+        
+        if not hasattr(first_response, 'message') or first_response.message is None:
+            return "Error: No response received from the model"
+        
+        msg = first_response.message
+        tool_calls = getattr(msg, 'tool_calls', None)
+        
+        if not tool_calls or len(tool_calls) == 0:
+            # No tool calls made - return direct response or error
+            content = getattr(msg, 'content', '')
+            return content if content else f"Model didn't make required tool calls for log_id {log_id}"
+        
+        print(f"Processing {len(tool_calls)} tool calls")
+        
+        # Execute all tool calls and collect results
+        tool_results = []
+        executed_tools_info = []  # For creating summary
+        
+        for call in tool_calls:
+            try:
+                args = json.loads(call.function.arguments)
+                result = func_map[call.function.name](**args)
+                
+                tool_results.append({
+                    "role": "tool", 
+                    "tool_call_id": call.id,
+                    "content": json.dumps(result, default=str)
+                })
+                
+                # Store for summary
+                executed_tools_info.append({
+                    "function": call.function.name,
+                    "args": args,
+                    "result": result
+                })
+                
+            except Exception as e:
+                error_result = {"error": str(e)}
+                tool_results.append({
+                    "role": "tool",
+                    "tool_call_id": call.id, 
+                    "content": json.dumps(error_result)
+                })
+                executed_tools_info.append({
+                    "function": call.function.name,
+                    "args": args if 'args' in locals() else {},
+                    "result": error_result
+                })
+
+        # Create a comprehensive summary of all tool results
+        tools_summary = "Tool Execution Results:\n\n"
+        for i, tool_info in enumerate(executed_tools_info, 1):
+            tools_summary += f"{i}. Function: {tool_info['function']}\n"
+            tools_summary += f"   Arguments: {tool_info['args']}\n"
+            tools_summary += f"   Result: {json.dumps(tool_info['result'], indent=2, default=str)}\n\n"
+
+        # Build complete conversation history
+        conversation = [
+            {"role": "user", "content": user_msg},
+            {
+                "role": "assistant",
+                "content": getattr(msg, 'content', '') or '',
+                "tool_calls": [
+                    {
+                        "id": call.id,
+                        "type": "function", 
+                        "function": {
+                            "name": call.function.name,
+                            "arguments": call.function.arguments
+                        }
+                    } for call in tool_calls
+                ]
+            }
+        ]
+        
+        # Add all tool results
+        conversation.extend(tool_results)
+        
+        # Add analysis request with tool results summary
+        analysis_prompt = (
+            f"Based on the tool execution results above, please provide a comprehensive incident analysis report for log ID {log_id}. "
+            f"Here's a summary of what was retrieved:\n\n{tools_summary}"
+            f"Please analyze this information and provide:\n"
+            f"1. Complete job failure details\n"
+            f"2. Root cause analysis\n" 
+            f"3. Step-by-step resolution instructions\n"
+            f"4. Preventive measures\n"
+            f"5. Any additional insights\n\n"
+            f"Do not make any additional tool calls - just provide a detailed analysis based on the data above."
+        )
+        
+        conversation.append({
+            "role": "user", 
+            "content": analysis_prompt
+        })
+        
+        # Second API call WITHOUT tools
+        second_response = co.chat(
+            model="command-r-08-2024",
+            messages=conversation,
+            temperature=0.1
+        )
+        
+        if not hasattr(second_response, 'message') or second_response.message is None:
+            return f"Error: No second response received. Tool results were: {tools_summary}"
+        
+        final_msg = second_response.message
+        
+        # Check if it inappropriately made more tool calls
+        if hasattr(final_msg, 'tool_calls') and final_msg.tool_calls:
+            return (f"Error: Model made unexpected tool calls in second response. "
+                   f"Tool summary: {tools_summary}")
+        
+        # Extract and return content
+        content = getattr(final_msg, 'content', None)
+        if not content:
+            return f"Error: No content in final response. Tool results: {tools_summary}"
+        
+        # Handle different content formats
+        if isinstance(content, list):
+            text_parts = []
+            for block in content:
+                if hasattr(block, 'text'):
+                    text_parts.append(block.text)
+                elif isinstance(block, dict) and 'text' in block:
+                    text_parts.append(block['text'])
+                elif isinstance(block, str):
+                    text_parts.append(block)
+            
+            final_content = '\n'.join(text_parts) if text_parts else None
+        elif isinstance(content, str):
+            final_content = content
+        else:
+            final_content = str(content)
+        
+        if not final_content or final_content.strip() == '':
+            return f"Error: Empty final response. Tool results were: {tools_summary}"
+        
+        return final_content
+        
+    except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        return f"Error in incident analysis: {str(e)}\n\nFull traceback:\n{error_trace}"
+
 def render_sidebar():
     """Render the chat history sidebar"""
     with st.sidebar:
@@ -414,87 +714,91 @@ def main():
     # Render sidebar
     render_sidebar()
     
-    # Main chat interface
-    st.title("💬 STC Chat Assistant")
-    
-    # Display current chat messages
-    for message in st.session_state.current_messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-            
-            # Show optional details for data queries
-            if message["role"] == "assistant" and "sql_query" in message:
+    if mode == "SQL Query Assistant":
+        # ── Existing SQL chat UI ───────────────────────
+        st.title("💬 STC Chat Assistant")
+        
+        # Display current chat messages
+        for message in st.session_state.current_messages:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
                 
-                with st.expander("View details", expanded=False):
-                    # Show data if available
-                    if "data" in message and not message["data"].empty:
-                        
-                        # Create tabs for different views
-                        tab1, tab2 = st.tabs(["📋 Data", "📥 Export"])
-                        
-                        with tab1:
-                            st.dataframe(message["data"], use_container_width=True)
-                            st.caption(f"{len(message['data'])} rows")
-                        
-                        with tab2:
-                            csv = message["data"].to_csv(index=False)
-                            st.download_button(
-                                label="Download CSV",
-                                data=csv,
-                                file_name=f"data_{message['timestamp'].strftime('%Y%m%d_%H%M%S')}.csv",
-                                mime="text/csv",
-                                key=f"download_{message['id']}"
-                            )
-                            
-                            # Show SQL query
-                            st.markdown("**Generated SQL:**")
-                            st.code(message["sql_query"], language="sql")
+                # Show optional details for data queries
+                if message["role"] == "assistant" and "sql_query" in message:
+                    with st.expander("View details", expanded=False):
+                        if "data" in message and not message["data"].empty:
+                            tab1, tab2 = st.tabs(["📋 Data", "📥 Export"])
+                            with tab1:
+                                st.dataframe(message["data"], use_container_width=True)
+                                st.caption(f"{len(message['data'])} rows")
+                            with tab2:
+                                csv = message["data"].to_csv(index=False)
+                                st.download_button(
+                                    label="Download CSV",
+                                    data=csv,
+                                    file_name=f"data_{message['timestamp'].strftime('%Y%m%d_%H%M%S')}.csv",
+                                    mime="text/csv",
+                                    key=f"download_{message['id']}"
+                                )
+                                st.markdown("**Generated SQL:**")
+                                st.code(message["sql_query"], language="sql")
+        
+        # Chat input
+        if prompt := st.chat_input("Ask me about your business data..."):
+            with st.chat_message("user"):
+                st.markdown(prompt)
+            with st.chat_message("assistant"):
+                placeholder = st.empty()
+                placeholder.markdown('<p class="processing-text">Processing your question...</p>', unsafe_allow_html=True)
+                process_user_question(prompt)
+                placeholder.empty()
+                latest = st.session_state.current_messages[-1]
+                st.markdown(latest["content"])
+                
+                if "sql_query" in latest:
+                    with st.expander("View details", expanded=False):
+                        if "data" in latest and not latest["data"].empty:
+                            tab1, tab2 = st.tabs(["📋 Data", "📥 Export"])
+                            with tab1:
+                                st.dataframe(latest["data"], use_container_width=True)
+                                st.caption(f"{len(latest['data'])} rows")
+                            with tab2:
+                                csv = latest["data"].to_csv(index=False)
+                                st.download_button(
+                                    label="Download CSV",
+                                    data=csv,
+                                    file_name=f"data_{latest['timestamp'].strftime('%Y%m%d_%H%M%S')}.csv",
+                                    mime="text/csv",
+                                    key=f"download_latest_{latest['id']}"
+                                )
+                                st.markdown("**Generated SQL:**")
+                                st.code(latest["sql_query"], language="sql")
+            
+            save_current_chat()
+            st.rerun()
     
-    # Chat input with enhanced styling
-    if prompt := st.chat_input("Ask me about your business data..."):
-        # Process the question and add to current chat
-        with st.chat_message("user"):
-            st.markdown(prompt)
+    else:
+        # ── Data Incident Explainer UI ───────────────
+        st.title("🔴 Data Pipeline Incident Explainer")
         
-        with st.chat_message("assistant"):
-            # Show a temporary placeholder while processing
-            placeholder = st.empty()
-            placeholder.markdown('<p class="processing-text">Processing your question...</p>', unsafe_allow_html=True)
-            
-            # Process the question
-            process_user_question(prompt)
-            
-            # Clear placeholder and show the actual response
-            placeholder.empty()
-            latest_response = st.session_state.current_messages[-1]
-            st.markdown(latest_response["content"])
-            
-            # Show details if it's a data query
-            if "sql_query" in latest_response:
-                with st.expander("View details", expanded=False):
-                    if "data" in latest_response and not latest_response["data"].empty:
-                        tab1, tab2 = st.tabs(["📋 Data", "📥 Export"])
-                        
-                        with tab1:
-                            st.dataframe(latest_response["data"], use_container_width=True)
-                            st.caption(f"{len(latest_response['data'])} rows")
-                        
-                        with tab2:
-                            csv = latest_response["data"].to_csv(index=False)
-                            st.download_button(
-                                label="Download CSV",
-                                data=csv,
-                                file_name=f"data_{latest_response['timestamp'].strftime('%Y%m%d_%H%M%S')}.csv",
-                                mime="text/csv",
-                                key=f"download_latest_{latest_response['id']}"
-                            )
-                            
-                            st.markdown("**Generated SQL:**")
-                            st.code(latest_response["sql_query"], language="sql")
+        # Fetch recent failures
+        session = SessionLocal()
+        rows = session.execute(
+            text("SELECT log_id, job_name, run_timestamp FROM job_logs WHERE status='FAILURE' ORDER BY run_timestamp DESC LIMIT 50")
+        ).fetchall()
+        session.close()
         
-        # Save the current chat and rerun to update sidebar
-        save_current_chat()
-        st.rerun()
+        options = [
+            f"{r._mapping['log_id']} | {r._mapping['job_name']} @ {r._mapping['run_timestamp']}"
+            for r in rows
+        ]
+        selected = st.selectbox("Select a failed run", options)
+        
+        if st.button("Explain Incident"):
+            log_id = int(selected.split("|")[0].strip())
+            with st.spinner("Generating incident report…"):
+                explanation = explain_incident_agent(log_id)
+            st.markdown(explanation)
 
 if __name__ == "__main__":
     main()

@@ -1,0 +1,13 @@
+error_pattern,root_cause_en,resolution_en,root_cause_ar,resolution_ar
+%Connection refused%,Database connection refused,Check network and credentials,تم رفض اتصال قاعدة البيانات,تحقق من الشبكة وبيانات الاعتماد
+%timeout%,Operation timed out,Increase timeout or optimize query,انتهت مهلة العملية,قم بزيادة المهلة أو تحسين الاستعلام
+%permission denied%,Permission denied,Verify file or resource permissions,تم رفض الإذن,تحقق من أذونات الملف أو المورد
+%disk full%,Disk is full,Free up disk space,القرص ممتلئ,قم بتحرير مساحة القرص
+%out of memory%,Out of memory,Increase memory allocation,نفدت الذاكرة,قم بزيادة تخصيص الذاكرة
+%NullPointerException%,Null pointer dereference,Check for missing data or initialize variables,إشارة إلى مؤشر خالي,تحقق من البيانات المفقودة أو قم بتهيئة المتغيرات
+%FileNotFoundError%,File not found,Verify file path and existence,الملف غير موجود,تحقق من مسار الملف ووجوده
+%SyntaxError%,Syntax error in configuration,Fix syntax in config files,خطأ في بناء الجملة,قم بإصلاح بناء الجملة في ملفات التكوين
+%AuthFailure%,Authentication failure,Check API credentials,فشل المصادقة,تحقق من بيانات اعتماد API
+%deadlock detected%,Database deadlock,Investigate and optimize transactions,اكتشاف تعارض في قواعد البيانات,تحقيق وتحسين المعاملات
+%parse error%,Parse error,Validate input formats,خطأ في التحليل,تحقق من تنسيقات الإدخال
+%API response code 500%,Internal server error from API,Check API service status,خطأ داخلي في خادم API,تحقق من حالة خدمة API

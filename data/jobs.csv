@@ -1,0 +1,9 @@
+job_name,description,owner
+daily_load,Ingest raw data daily,data_eng
+aggregate_sales,Aggregate sales metrics,analytics
+churn_calc,Compute monthly churn,analytics
+data_cleanup,Clean raw data,data_eng
+enrichment,Enrich data with third-party API,data_science
+backup,Backup database,ops
+reporting,Generate end-of-day reports,reporting
+anomaly_detection,Detect anomalies in sales data,data_science
