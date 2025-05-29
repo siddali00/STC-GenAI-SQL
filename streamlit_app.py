@@ -609,8 +609,20 @@ def generate_sql_query(user_question: str) -> str:
         print(f"🔍 Current Question: {user_question}")
         print(f"🔍 English Translation: {english_question}")
         
+        # Get current date for context
+        current_date = datetime.now()
+        current_date_str = current_date.strftime('%Y-%m-%d')
+        current_month = current_date.strftime('%B %Y')
+        last_month = (current_date.replace(day=1) - pd.Timedelta(days=1)).strftime('%B %Y')
+        
         system_prompt = (
-            """You are a SQL assistant. Given a natural-language question and a database schema, generate a valid PostgreSQL query.
+            f"""You are a SQL assistant. Given a natural-language question and a database schema, generate a valid PostgreSQL query.
+            
+            **CURRENT DATE CONTEXT**:
+            - Today's date: {current_date_str}
+            - Current month: {current_month}
+            - Last month: {last_month}
+            - Use this context to interpret relative date terms like "last month", "this month", "this quarter", etc.
             
             IMPORTANT RULES:
             1. **Use case-insensitive matching (ILIKE) when filtering text columns like `region` or `segment`**
@@ -628,6 +640,12 @@ def generate_sql_query(user_question: str) -> str:
                 - "Region A" → WHERE region ILIKE 'Region A'
                 - "المنطقة A" → WHERE region ILIKE 'Region A'
                 - "الشمالية" → WHERE region ILIKE 'North'
+            
+            **RELATIVE DATE INTERPRETATION**:
+            - "last month" = {last_month} = use WHERE EXTRACT(YEAR FROM date) = {(current_date.replace(day=1) - pd.Timedelta(days=1)).year} AND EXTRACT(MONTH FROM date) = {(current_date.replace(day=1) - pd.Timedelta(days=1)).month}
+            - "this month" = {current_month} = use WHERE EXTRACT(YEAR FROM date) = {current_date.year} AND EXTRACT(MONTH FROM date) = {current_date.month}
+            - "last quarter" = previous complete quarter based on current date
+            - Always convert relative terms to specific date ranges
             
             **CRITICAL - YEAR-OVER-YEAR GROWTH CALCULATIONS**:
             - **AVOID complex window functions with GROUP BY** - they cause PostgreSQL errors
@@ -706,15 +724,51 @@ def generate_natural_language_response(user_question: str, sql_query: str, df: p
         if df.empty:
             return "I searched your data but didn't find any results matching your criteria. You might want to try a different time period or criteria."
         
-        # Convert DataFrame to a readable format for the AI
+        # Convert DataFrame to a clean, readable format for the AI
         data_summary = f"Query returned {len(df)} rows with columns: {', '.join(df.columns)}\n"
         
-        # Include sample data (first few rows)
+        # Format the data more cleanly to avoid formatting artifacts
         if len(df) > 0:
-            data_summary += f"Sample data:\n{df.head(5).to_string(index=False)}"
+            # Convert to a more structured format that won't cause spacing issues
+            sample_data = df.head(5)
+            
+            # Create a clean text representation
+            data_rows = []
+            for _, row in sample_data.iterrows():
+                row_data = []
+                for col in df.columns:
+                    value = row[col]
+                    # Clean up numeric formatting
+                    if pd.isna(value):
+                        row_data.append("NULL")
+                    elif isinstance(value, (int, float)):
+                        # Format numbers cleanly
+                        if isinstance(value, float):
+                            if value.is_integer():
+                                row_data.append(str(int(value)))
+                            else:
+                                row_data.append(f"{value:,.2f}")
+                        else:
+                            row_data.append(f"{value:,}")
+                    else:
+                        # Clean up text values
+                        row_data.append(str(value).strip())
+                data_rows.append(" | ".join(row_data))
+            
+            # Create clean header and data
+            header = " | ".join(df.columns)
+            sample_text = f"{header}\n" + "\n".join(data_rows)
+            data_summary += f"Sample data:\n{sample_text}"
         
         system_prompt = (
             """You are a friendly business data analyst. Based on a user's question and the query results, provide a conversational summary of the findings. Be helpful, insightful, and highlight key business insights. Keep it natural and easy to understand. Keep your answer short and to the point. Do not go into depths explaining the data results. Keep it simple and concise. Respond in the language of the user's question.
+            
+            **IMPORTANT FORMATTING RULES**:
+            - Provide clean, properly formatted text without any spacing artifacts
+            - Use proper number formatting (e.g., "25,364.32" not "25, 364.32")
+            - Ensure region/location names are properly spaced (e.g., "West" not "W est")
+            - Write in clean, natural language without unusual character breaks
+            - Numbers should be clearly readable and properly formatted
             
             **CONVERSATION CONTEXT & FOLLOW-UP HANDLING**:
             - **ANALYZE conversation history** to understand if this is a follow-up question
@@ -745,7 +799,12 @@ User Question: {user_question}
 SQL Query Used: {sql_query}
 Results Summary: {data_summary}
 
-Please provide a natural, conversational response summarizing these findings and any business insights. Consider the conversation history to provide contextual analysis.
+Current Date Context:
+- Today's date: {datetime.now().strftime('%Y-%m-%d')}
+- Current month: {datetime.now().strftime('%B %Y')}
+- Last month: {(datetime.now().replace(day=1) - pd.Timedelta(days=1)).strftime('%B %Y')}
+
+Please provide a natural, conversational response summarizing these findings and any business insights. Consider the conversation history to provide contextual analysis. When referring to time periods, be specific about what period was actually analyzed based on the current date context.
 """
         messages.append({"role": "user", "content": user_prompt})
         
