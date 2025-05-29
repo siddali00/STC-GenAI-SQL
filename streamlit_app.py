@@ -1063,7 +1063,6 @@ def render_sidebar():
             <h1 style="margin: 0; font-size: 1.4rem; color: white;">
                 <span class="status-indicator"></span>{mode_emoji} {mode_short} Chats
             </h1>
-            <small style="color: rgba(255, 255, 255, 0.6);">AI Ready</small>
         </div>
         """, unsafe_allow_html=True)
         
@@ -1149,10 +1148,10 @@ def render_footer():
     st.markdown("""
     <div style="text-align: center; padding: 2rem 0; color: #6c757d;">
         <p style="margin: 0; font-size: 0.9rem;">
-            🚀 <strong>STC Query Assistant</strong> | Powered by AI
+            🚀 <strong>STC Query Assistant</strong> | 
         </p>
         <p style="margin: 0.5rem 0 0 0; font-size: 0.8rem;">
-            Built with ❤️ using Streamlit & Cohere | 
+            Built using Streamlit & Cohere | 
             <a href="#" style="color: #667eea; text-decoration: none;">Documentation</a> | 
             <a href="#" style="color: #667eea; text-decoration: none;">Support</a>
         </p>
