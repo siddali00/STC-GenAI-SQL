@@ -358,6 +358,17 @@ st.markdown("""
         font-weight: 500;
         margin-top: 0.5rem;
     }
+    
+    /* RTL support for selectbox labels and content */
+    .stSelectbox label {
+        direction: rtl !important;
+        text-align: right !important;
+        width: 100% !important;
+    }
+    .stSelectbox > div > div {
+        direction: rtl !important;
+        text-align: right !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -367,18 +378,18 @@ st.markdown("""
 with st.sidebar:
     st.markdown("""
     <div style="text-align: center; margin-bottom: 1.5rem; padding: 0.8rem; background: rgba(255, 255, 255, 0.1); border-radius: 12px; backdrop-filter: blur(10px);">
-        <h2 style="color: white; margin: 0; font-size: 1.2rem;">🎯 Mode</h2>
+        <h2 style="color: white; margin: 0; font-size: 1.2rem;"> وضع 🎯</h2>
     </div>
     """, unsafe_allow_html=True)
     
     mode = st.selectbox(
         "",
-        ["💬 Chat Assistant", "🔴 Incident Analyzer"],
+        [" مساعد الدردشة 💬 ", " محلل الحوادث 🔴 "],
         label_visibility="collapsed"
     )
     
-    # Remove emoji from mode for logic
-    if "Chat Assistant" in mode:
+    # Fix mode detection logic
+    if " مساعد الدردشة" in mode:
         mode = "SQL Query Assistant"
     else:
         mode = "Data Incident Explainer"
@@ -624,15 +635,76 @@ def execute_sql_query(sql: str) -> tuple[pd.DataFrame, str, bool]:
             
     except Exception as e:
         return pd.DataFrame(), f"❌ Error executing SQL: {str(e)}", False
+    
+
+def translate_to_english(text: str) -> str:
+    """Translate non-English text to English for better SQL generation"""
+    try:
+        system_prompt = (
+            """You are a translator. If the input text is in a language other than English, translate it to English while preserving the exact meaning and context, especially for business and data analysis terms.
+
+            If the text is already in English, return it unchanged.
+            
+            For business terms:
+            - العملاء المتسربين = churned customers
+            - يناير = January
+            - العملاء = customers
+            - المبيعات = sales
+            - الإيرادات = revenue
+            
+            Return ONLY the translated text or original text if already in English."""
+        )
+        
+        resp = co.chat(
+            model="command-r-08-2024",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": text}
+            ]
+        )
+        
+        return resp.message.content[0].text.strip()
+        
+    except Exception as e:
+        return text
+    
+
+
 
 def generate_sql_query(user_question: str) -> str:
     """Generate SQL query using Cohere API"""
+
+    english_question = translate_to_english(user_question)
     try:
         system_prompt = (
-            "You are a SQL assistant. Given a natural-language question and a database schema, generate a valid PostgreSQL query. **Use case-insensitive matching (e.g. `ILIKE`) when filtering text columns like `region` or `segment.** Return ONLY the SQL query, no explanation or markdown formatting."
+            """You are a SQL assistant. Given a natural-language question and a database schema, generate a valid PostgreSQL query.
+            
+            IMPORTANT RULES:
+            1. **Use case-insensitive matching (ILIKE) when filtering text columns like `region` or `segment`**
+            2. **For date filtering, use proper date format and column names from the schema**
+            3. **Do NOT use user input directly as column values - map them to actual database values**
+            4. **For churn analysis, use the correct table structure provided in the schema**
+            5. **If asking about churned customers, look for churn-related columns like `churn_status`, `churned`, or similar**
+            6. **For time periods, use the actual date columns in the database**
+            7.*For product filtering: Use = (exact match) for single letters/numbers, ILIKE for partial text**
+                PRODUCT FILTERING EXAMPLES:
+                - "Product A" → WHERE product ILIKE 'Product A'
+                - "المنتج A" → WHERE product ILIKE 'Product A'
+            8. **For region filtering: Use = (exact match) for single letters/numbers, ILIKE for partial text**
+                REGION FILTERING EXAMPLES:
+                - "Region A" → WHERE region ILIKE 'Region A'
+                - "المنطقة A" → WHERE region ILIKE 'Region A'
+                - "الشمالية" → WHERE region ILIKE 'North'
+            
+            Schema Information:
+            - Always refer to the actual column names in the database
+            - Use proper date filtering with DATE columns
+            - Don't assume column names based on the question - use schema column names
+            
+            Return ONLY the SQL query, no explanation or markdown formatting."""
         )
         
-        user_prompt = f"{SCHEMA_INFO}\nQuestion: {user_question}"
+        user_prompt = f"Database Schema:{SCHEMA_INFO}\n Original Question: {user_question}\n English Translation: {english_question}"
         
         resp = co.chat(
             model="command-r-08-2024",
@@ -667,7 +739,7 @@ def generate_natural_language_response(user_question: str, sql_query: str, df: p
             data_summary += f"Sample data:\n{df.head(5).to_string(index=False)}"
         
         system_prompt = (
-            "You are a friendly business data analyst. Based on a user's question and the query results,provide a conversational summary of the findings. Be helpful, insightful, and highlight key business insights. Keep it natural and easy to understand. Keep your answer short and to the point. Do not go into depths explaining the data results. Keep it simple and concise."
+            "You are a friendly business data analyst. Based on a user's question and the query results,provide a conversational summary of the findings. Be helpful, insightful, and highlight key business insights. Keep it natural and easy to understand. Keep your answer short and to the point. Do not go into depths explaining the data results. Keep it simple and concise. Respond in the language of the user's question."
         )
         
         user_prompt = f"""
@@ -868,24 +940,40 @@ tool_defs = [
     for f in functions
 ]
 
-def explain_incident_agent(log_id: int) -> str:
+def explain_incident_agent(log_id: int, language: str = "english") -> str:
     """
     Analyze and explain an incident by fetching log details and providing 
-    root cause analysis with resolution steps.
+    root cause analysis with resolution steps in the specified language.
     """
-    print(f"DEBUG: Starting analysis for log_id: {log_id}")
+    print(f"DEBUG: Starting analysis for log_id: {log_id} in {language}")
     
-    user_msg = (
-        f"Please analyze incident log ID {log_id}. "
-        f"First, fetch the failure details using the log ID. "
-        f"Then, use the error message to look up root cause and resolution information. "
-        f"Provide a comprehensive explanation including:\n"
-        f"1. Job details (name, timestamp)\n"
-        f"2. Error message analysis\n"
-        f"3. Root cause explanation\n"
-        f"4. Detailed resolution steps\n"
-        f"5. Preventive measures if applicable"
-    )
+    # Language-specific prompts
+    if language == "arabic":
+        user_msg = (
+            f"يرجى تحليل حادثة السجل رقم {log_id}. "
+            f"أولاً، احصل على تفاصيل الفشل باستخدام معرف السجل. "
+            f"ثم، استخدم رسالة الخطأ للبحث عن معلومات السبب الجذري والحل. "
+            f"قدم شرحاً شاملاً يتضمن:\n"
+            f"1. تفاصيل المهمة (الاسم، الوقت)\n"
+            f"2. تحليل رسالة الخطأ\n"
+            f"3. شرح السبب الجذري\n"
+            f"4. خطوات الحل التفصيلية\n"
+            f"5. الإجراءات الوقائية إن أمكن"
+        )
+        analysis_language_instruction = "يرجى تقديم التقرير باللغة العربية."
+    else:
+        user_msg = (
+            f"Please analyze incident log ID {log_id}. "
+            f"First, fetch the failure details using the log ID. "
+            f"Then, use the error message to look up root cause and resolution information. "
+            f"Provide a comprehensive explanation including:\n"
+            f"1. Job details (name, timestamp)\n"
+            f"2. Error message analysis\n"
+            f"3. Root cause explanation\n"
+            f"4. Detailed resolution steps\n"
+            f"5. Preventive measures if applicable"
+        )
+        analysis_language_instruction = "Please provide the report in English."
     
     try:
         print(f"DEBUG: Making first API call...")
@@ -978,18 +1066,31 @@ def explain_incident_agent(log_id: int) -> str:
         # Add all tool results
         conversation.extend(tool_results)
         
-        # Add analysis request with tool results summary
-        analysis_prompt = (
-            f"Based on the tool execution results above, please provide a comprehensive incident analysis report for log ID {log_id}. "
-            f"Here's a summary of what was retrieved:\n\n{tools_summary}"
-            f"Please analyze this information and provide:\n"
-            f"1. Complete job failure details\n"
-            f"2. Root cause analysis\n" 
-            f"3. Step-by-step resolution instructions\n"
-            f"4. Preventive measures\n"
-            f"5. Any additional insights\n\n"
-            f"Do not make any additional tool calls - just provide a detailed analysis based on the data above."
-        )
+        # Add analysis request with language specification
+        if language == "arabic":
+            analysis_prompt = (
+                f"استناداً إلى نتائج الأدوات أعلاه، يرجى تقديم تقرير تحليل شامل للحادثة رقم {log_id}. "
+                f"ملخص ما تم استرداده:\n\n{tools_summary}"
+                f"يرجى تحليل هذه المعلومات وتقديم:\n"
+                f"1. تفاصيل فشل المهمة الكاملة\n"
+                f"2. تحليل السبب الجذري\n" 
+                f"3. تعليمات الحل خطوة بخطوة\n"
+                f"4. الإجراءات الوقائية\n"
+                f"5. أي رؤى إضافية\n\n"
+                f"لا تقم بأي استدعاءات أدوات إضافية - فقط قدم تحليلاً مفصلاً باللغة العربية بناءً على البيانات أعلاه. لا تضف عنواناً للتقرير."
+            )
+        else:
+            analysis_prompt = (
+                f"Based on the tool execution results above, please provide a comprehensive incident analysis report for log ID {log_id}. "
+                f"Here's a summary of what was retrieved:\n\n{tools_summary}"
+                f"Please analyze this information and provide:\n"
+                f"1. Complete job failure details\n"
+                f"2. Root cause analysis\n" 
+                f"3. Step-by-step resolution instructions\n"
+                f"4. Preventive measures\n"
+                f"5. Any additional insights\n\n"
+                f"Do not make any additional tool calls - just provide a detailed analysis in English based on the data above. Do not add a report header."
+            )
         
         conversation.append({
             "role": "user", 
@@ -1054,20 +1155,20 @@ def render_sidebar():
     with st.sidebar:
         # Get current mode for display
         current_mode = st.session_state.get('current_mode', 'SQL Query Assistant')
-        mode_emoji = "💬" if "SQL" in current_mode else "🔴"
-        mode_short = "SQL" if "SQL" in current_mode else "Incident"
+        # mode_emoji = "💬" if "SQL" in current_mode else "🔴"
+        # mode_short = "SQL" if "SQL" in current_mode else "Incident"
         
         # Compact sidebar header with status
         st.markdown(f"""
         <div style="text-align: center; margin-bottom: 1.5rem;">
             <h1 style="margin: 0; font-size: 1.4rem; color: white;">
-                <span class="status-indicator"></span>{mode_emoji} {mode_short} Chats
+                <span class="status-indicator"></span>المحادثات
             </h1>
         </div>
         """, unsafe_allow_html=True)
         
         # Compact new chat button
-        if st.button("➕ New", use_container_width=True, type="primary"):
+        if st.button("جديد➕", use_container_width=True, type="primary"):
             create_new_chat()
             st.rerun()
         
@@ -1129,8 +1230,8 @@ def render_sidebar():
                 module_name = "SQL" if "SQL" in current_mode else "Incident"
                 st.markdown(f"""
                 <div style="text-align: center; color: rgba(255, 255, 255, 0.6); padding: 1rem 0;">
-                    <p style="margin: 0;">No {module_name} chats yet</p>
-                    <small>Start chatting!</small>
+                    <p style="margin: 0;">لا توجد محادثات بعد</p>
+                    <small>ابدأ الدردشة</small>
                 </div>
                 """, unsafe_allow_html=True)
         else:
@@ -1142,19 +1243,19 @@ def render_sidebar():
             </div>
             """, unsafe_allow_html=True)
 
-def render_footer():
-    """Render a beautiful footer"""
-    st.markdown("---")
-    st.markdown("""
-    <div style="text-align: center; padding: 2rem 0; color: #6c757d;">
-        <p style="margin: 0; font-size: 0.9rem;">
-            🚀 <strong>STC Query Assistant</strong> | 
-        </p>
-        <p style="margin: 0.5rem 0 0 0; font-size: 0.8rem;">
-            Built using Streamlit & Cohere 
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
+# def render_footer():
+#     """Render a beautiful footer"""
+#     st.markdown("---")
+#     st.markdown("""
+#     <div style="text-align: center; padding: 2rem 0; color: #6c757d;">
+#         <p style="margin: 0; font-size: 0.9rem;">
+#             🚀 <strong>STC Query Assistant</strong> | 
+#         </p>
+#         <p style="margin: 0.5rem 0 0 0; font-size: 0.8rem;">
+#             Built using Streamlit & Cohere 
+#         </p>
+#     </div>
+#     """, unsafe_allow_html=True)
 
 def main():
     # Set current mode in session state for module-specific chats
@@ -1168,6 +1269,8 @@ def main():
         # Start fresh for the new module
         st.session_state.current_chat_id = str(uuid.uuid4())
         st.session_state.current_messages = []
+        # Force page reload on mode switch
+        st.rerun()
     
     # Initialize chat system
     initialize_chat_system()
@@ -1176,62 +1279,81 @@ def main():
     render_sidebar()
     
     if mode == "SQL Query Assistant":
-        # Enhanced SQL Query Assistant UI
+        # Enhanced SQL Query Assistant UI with RTL support
         st.markdown("""
         <div style="text-align: center; margin-bottom: 3rem;">
-            <h1 style="margin: 0;">💬 STC Chat Assistant</h1>
-            <p style="color: #6c757d; font-size: 1.2rem; margin-top: 0.5rem;">Ask questions about your business data in natural language</p>
+            <h1 style="margin: 0;">مساعد الدردشة STC 💬 </h1>
+            <p style="color: #6c757d; font-size: 1.2rem; margin-top: 0.5rem; direction: rtl;">
+                اطرح أسئلة حول بيانات عملك باللغة الطبيعية
+            </p>
         </div>
         """, unsafe_allow_html=True)
         
         # Welcome cards when no messages
         if not st.session_state.current_messages:
-            st.markdown("### 🚀 Get Started")
+            # Fix for RTL headers while maintaining proper markdown rendering
+            st.markdown("""
+            <style>
+                [data-testid="stMarkdownContainer"] h3 {
+                    direction: rtl;
+                    text-align: right;
+                }
+            </style>
+            """, unsafe_allow_html=True)
+            
+            # Use regular markdown for headers - they'll inherit RTL from the style above
+            st.markdown("### 🚀 ابدأ")
             
             # Sample questions in cards
             col1, col2, col3 = st.columns(3)
             
             sample_questions = [
-                "How many units of Product A were sold overall?",
-                "Which customer segments had the highest churn in january 2024?",
-                "What were the sales numbers in Q4 2024 for north region?"
+                "ما هو إجمالي الإيرادات في 1 يوليو 2024؟",
+                "ما هي شرائح العملاء الأعلى تسرباً في يناير 2024؟",
+                "أي منطقة حققت أعلى نمو في الإيرادات بين الأرباع في 2024؟?"
             ]
             
             for i, (col, question) in enumerate(zip([col1, col2, col3], sample_questions)):
                 with col:
                     if st.button(f"💡 {question}", key=f"sample_{i}", use_container_width=True):
-                        # Process the question (this will add both user and assistant messages)
                         try:
                             with st.spinner("🤔 Processing your question..."):
                                 process_user_question(question)
-                            
-                            # Save and rerun to display the conversation
                             save_current_chat()
                             st.rerun()
                         except Exception as e:
                             st.error(f"❌ Error processing question: {str(e)}")
-                            # Add error message to chat
                             add_message("assistant", f"I encountered an error while processing your question: {str(e)}")
                             save_current_chat()
                             st.rerun()
             
             st.markdown("---")
-            st.markdown("### 💡 **Tips for better results:**")
+            st.markdown("### 💡 نصائح للحصول على نتائج أفضل:")
+            
+            # Content under the tips header
             st.markdown("""
-            - Be specific about time periods and metrics
-            - Ask about sales, revenue, customers, or churn data
-            - Use natural language - no need for technical terms
-            """)
+            <div style="direction: rtl; text-align: right;">
+            <ul style="list-style-type: disc; padding-right: 20px; margin-right: 20px;">
+                <li>كن محددًا بشأن الفترات الزمنية والمقاييس</li>
+                <li>اسأل عن بيانات المبيعات أو الإيرادات أو العملاء أو معدل دوران العملاء</li>
+                <li>استخدم اللغة الطبيعية - لا حاجة للمصطلحات التقنية</li>
+            </ul>
+            </div>
+            """, unsafe_allow_html=True)
         
-        # Display current chat messages
+        # Display current chat messages with RTL support for Arabic
         for message in st.session_state.current_messages:
             with st.chat_message(message["role"]):
-                # Display the message content
-                st.markdown(message["content"])
+                # Check if content is in Arabic (simple check for Arabic characters)
+                is_arabic = any('\u0600' <= c <= '\u06FF' for c in message["content"])
+                if is_arabic:
+                    st.markdown(f'<div style="direction: rtl; text-align: right;">{message["content"]}</div>', unsafe_allow_html=True)
+                else:
+                    st.markdown(message["content"])
                 
                 # Show optional details for data queries
                 if message["role"] == "assistant" and "sql_query" in message:
-                    with st.expander("🔍 View Generated SQL", expanded=False):
+                    with st.expander("🔍 عرض SQL المولد" if is_arabic else "🔍 View Generated SQL", expanded=False):
                         st.markdown("""
                         <div style="background: #1e1e1e; 
                                     border-radius: 8px; 
@@ -1241,10 +1363,16 @@ def main():
                         st.code(message["sql_query"], language="sql")
                         st.markdown("</div>", unsafe_allow_html=True)
         
-        # Enhanced chat input
-        if prompt := st.chat_input("💭 Ask me about your business data..."):
+        # Enhanced chat input with RTL placeholder
+        if prompt := st.chat_input("💭 اسألني عن بيانات عملك..."):
             with st.chat_message("user"):
-                st.markdown(prompt)
+                # Check if input is Arabic
+                is_arabic = any('\u0600' <= c <= '\u06FF' for c in prompt)
+                if is_arabic:
+                    st.markdown(f'<div style="direction: rtl; text-align: right;">{prompt}</div>', unsafe_allow_html=True)
+                else:
+                    st.markdown(prompt)
+            
             with st.chat_message("assistant"):
                 placeholder = st.empty()
                 placeholder.markdown('<p class="processing-text">🤔 Processing your question...</p>', unsafe_allow_html=True)
@@ -1268,15 +1396,25 @@ def main():
             st.rerun()
     
     else:
-        # Enhanced Data Incident Explainer UI
+        # Enhanced Data Incident Explainer UI with RTL
         st.markdown("""
-        <div style="text-align: center; margin-bottom: 3rem;">
-            <h1 style="margin: 0;">🔴 Data Pipeline Incident Explainer</h1>
-            <p style="color: #6c757d; font-size: 1.2rem; margin-top: 0.5rem;">Analyze failed data pipeline runs and get resolution steps</p>
+        <div style="text-align: center; margin-bottom: 3rem; direction: rtl;">
+            <h1 style="margin: 0;"> 🔴 محلل حوادث خط أنابيب البيانات </h1>
+            <p style="color: #6c757d; font-size: 1.2rem; margin-top: 0.5rem;">تحليل عمليات تشغيل خط أنابيب البيانات الفاشلة والحصول على خطوات الحل</p>
         </div>
         """, unsafe_allow_html=True)
         
-        # Metrics dashboard
+        # Language selector with RTL
+        col_left, col_right = st.columns([1, 3])  # Reversed column ratio
+        with col_left:
+            report_language = st.selectbox(
+                "لغة التقرير 📄",
+                ["العربية", "English"],
+                index=0,
+                help="اختر لغة تقرير تحليل الحادث"
+            )
+        
+        # Metrics dashboard with RTL
         col1, col2, col3 = st.columns(3)
         
         # Fetch failure statistics
@@ -1295,32 +1433,32 @@ def main():
         
         with col1:
             st.markdown(f"""
-            <div class="metric-card">
+            <div class="metric-card" style="direction: rtl;">
                 <div class="metric-value">{total_failures}</div>
-                <div class="metric-label">Total Failures</div>
+                <div class="metric-label">إجمالي الفشل</div>
             </div>
             """, unsafe_allow_html=True)
         
         with col2:
             st.markdown(f"""
-            <div class="metric-card">
+            <div class="metric-card" style="direction: rtl;">
                 <div class="metric-value">{recent_failures}</div>
-                <div class="metric-label">Last 24 Hours</div>
+                <div class="metric-label">آخر 24 ساعة</div>
             </div>
             """, unsafe_allow_html=True)
         
         with col3:
             st.markdown(f"""
-            <div class="metric-card">
+            <div class="metric-card" style="direction: rtl;">
                 <div class="metric-value">{unique_jobs}</div>
-                <div class="metric-label">Affected Jobs</div>
+                <div class="metric-label">الوظائف المتضررة</div>
             </div>
             """, unsafe_allow_html=True)
         
         st.markdown("---")
         
-        # Failure selection section
-        st.markdown("### 📋 Select Failed Run")
+        # Failure selection section with RTL
+        st.markdown('<h3 style="direction: rtl; text-align: right;">📋 اختر العملية الفاشلة</h3>', unsafe_allow_html=True)
         
         # Fetch recent failures with better formatting
         rows = session.execute(
@@ -1333,40 +1471,75 @@ def main():
                 f"🔴 {r._mapping['log_id']} | {r._mapping['job_name']} @ {r._mapping['run_timestamp'].strftime('%Y-%m-%d %H:%M:%S')}"
                 for r in rows
             ]
+            # Add RTL styling for selectbox labels
+            st.markdown("""
+            <style>
+                /* RTL support for selectbox labels and content */
+                .stSelectbox label {
+                    direction: rtl !important;
+                    text-align: right !important;
+                    width: 100% !important;
+                }
+                .stSelectbox > div > div {
+                    direction: rtl !important;
+                    text-align: right !important;
+                }
+            </style>
+            """, unsafe_allow_html=True)
+            
             selected = st.selectbox(
-                "Choose a failed pipeline run to analyze:",
-                options,
-                help="Select from the most recent 50 failures"
+                "اختر عملية خط الأنابيب الفاشلة للتحليل:",
+                options=options,
+                help="اختر من آخر 50 عملية فاشلة",
+                label_visibility="visible"
             )
             
-            if st.button("🔍 Explain Incident", type="primary", use_container_width=True):
+            if st.button("🔍 تحليل الحادث", type="primary", use_container_width=True):
                 log_id = int(selected.split("|")[0].strip().replace("🔴 ", ""))
                 
-                with st.spinner("🔄 Analyzing incident and generating report..."):
+                # Set Arabic as default language
+                language = "english" if "English" in report_language else "arabic"
+                
+                with st.spinner('<div style="direction: rtl; text-align: right;">🔄 جاري تحليل الحادث وإنشاء التقرير...</div>'):
                     try:
-                        explanation = explain_incident_agent(log_id)
-                        st.success("✅ Analysis completed!")
+                        explanation = explain_incident_agent(log_id, language)
+                        st.markdown('<div style="direction: rtl; text-align: right;">✅ اكتمل التحليل!</div>', unsafe_allow_html=True)
                     except Exception as e:
-                        st.error(f"❌ Error during analysis: {str(e)}")
-                        explanation = f"Error occurred: {str(e)}"
+                        st.markdown(f'<div style="direction: rtl; text-align: right;">❌ حدث خطأ أثناء التحليل: {str(e)}</div>', unsafe_allow_html=True)
+                        explanation = f"حدث خطأ: {str(e)}"
                 
                 # Display the explanation
-                st.markdown("### 📊 Incident Analysis Report")
-                
+                report_title = "📊 تقرير تحليل الحادثة" if language == "arabic" else "📊 Incident Analysis Report"
+
+                # Add RTL support for Arabic title
+                if language == "arabic":
+                    st.markdown(f'<h3 style="direction: rtl; text-align: right;">{report_title}</h3>', unsafe_allow_html=True)
+                else:
+                    st.markdown(f"### {report_title}")
+
                 if explanation and explanation.strip():
-                    # Display in a styled container
-                    st.markdown("""
-                    <div style="background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); 
-                                padding: 1.5rem; 
-                                border-radius: 12px; 
-                                border-left: 4px solid #dc3545; 
-                                box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-                                margin: 1rem 0;">
-                    """, unsafe_allow_html=True)
+                    # Check if content is in Arabic
+                    is_arabic = language == "arabic"
                     
-                    st.markdown(explanation)
+                    styled_explanation = f"""
+                    <div style="
+                        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+                        padding: 1.5rem;
+                        border-radius: 12px;
+                        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+                        margin: 1rem 0;
+                        direction: {'rtl' if is_arabic else 'ltr'};
+                        text-align: {'right' if is_arabic else 'left'};
+                        border-{'right' if is_arabic else 'left'}: 4px solid #dc3545;
+                        border-{'left' if is_arabic else 'right'}: none;
+                        color: #1a1f36;
+                    ">
+                        {explanation}
+                    </div>
+                    """
                     
-                    st.markdown("</div>", unsafe_allow_html=True)
+                    # Render the styled content
+                    st.markdown(styled_explanation, unsafe_allow_html=True)
                     
                     # Show character count for debugging
                     st.caption(f"Report length: {len(explanation)} characters")
@@ -1385,7 +1558,7 @@ def main():
             st.info("ℹ️ No failed pipeline runs found in the database.")
 
     # Render footer
-    render_footer()
+    # render_footer()
 
 if __name__ == "__main__":
     main()
