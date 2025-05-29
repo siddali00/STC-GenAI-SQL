@@ -369,6 +369,15 @@ st.markdown("""
         direction: rtl !important;
         text-align: right !important;
     }
+    /* Additional styling for the selectbox container */
+    .stSelectbox {
+        direction: rtl !important;
+    }
+    /* Style for the selectbox options */
+    .stSelectbox > div > div > div[role="listbox"] {
+        direction: rtl !important;
+        text-align: right !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -1317,7 +1326,7 @@ def main():
                 with col:
                     if st.button(f"💡 {question}", key=f"sample_{i}", use_container_width=True):
                         try:
-                            with st.spinner("🤔 Processing your question..."):
+                            with st.spinner(" 🤔 جاري معالجة سؤالك"):
                                 process_user_question(question)
                             save_current_chat()
                             st.rerun()
@@ -1364,7 +1373,7 @@ def main():
                         st.markdown("</div>", unsafe_allow_html=True)
         
         # Enhanced chat input with RTL placeholder
-        if prompt := st.chat_input("💭 اسألني عن بيانات عملك..."):
+        if prompt := st.chat_input("💭 اسألني عن بيانات عملك"):
             with st.chat_message("user"):
                 # Check if input is Arabic
                 is_arabic = any('\u0600' <= c <= '\u06FF' for c in prompt)
@@ -1375,7 +1384,7 @@ def main():
             
             with st.chat_message("assistant"):
                 placeholder = st.empty()
-                placeholder.markdown('<p class="processing-text">🤔 Processing your question...</p>', unsafe_allow_html=True)
+                placeholder.markdown('<p class="processing-text">🤔 جاري معالجة سؤالك</p>', unsafe_allow_html=True)
                 process_user_question(prompt)
                 placeholder.empty()
                 latest = st.session_state.current_messages[-1]
@@ -1484,6 +1493,15 @@ def main():
                     direction: rtl !important;
                     text-align: right !important;
                 }
+                /* Additional styling for the selectbox container */
+                .stSelectbox {
+                    direction: rtl !important;
+                }
+                /* Style for the selectbox options */
+                .stSelectbox > div > div > div[role="listbox"] {
+                    direction: rtl !important;
+                    text-align: right !important;
+                }
             </style>
             """, unsafe_allow_html=True)
             
@@ -1500,7 +1518,7 @@ def main():
                 # Set Arabic as default language
                 language = "english" if "English" in report_language else "arabic"
                 
-                with st.spinner('<div style="direction: rtl; text-align: right;">🔄 جاري تحليل الحادث وإنشاء التقرير...</div>'):
+                with st.spinner('🔄 جاري تحليل الحادث وإنشاء التقرير'):
                     try:
                         explanation = explain_incident_agent(log_id, language)
                         st.markdown('<div style="direction: rtl; text-align: right;">✅ اكتمل التحليل!</div>', unsafe_allow_html=True)
