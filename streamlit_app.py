@@ -15,27 +15,348 @@ from pathlib import Path
 st.set_page_config(
     page_title="STC Query Assistant",
     page_icon="💬",
-    layout="centered",
+    layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for sidebar width and chat input styling
+# Custom CSS for modern styling
 st.markdown("""
 <style>
-    /* Reduce sidebar width */
-    .css-1d391kg {
-        width: 250px;
+    /* Import Google Fonts */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+    
+    /* Global font styling */
+    html, body, [class*="css"] {
+        font-family: 'Inter', sans-serif;
     }
     
-    /* Increase chat input size */
+    /* Hide Streamlit menu and footer */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    
+    /* Main container styling */
+    .main > div {
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+    }
+    
+    /* Sidebar styling */
+    .css-1d391kg {
+        width: 220px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border-right: none;
+    }
+    
+    .css-1d391kg .css-1v0mbdj {
+        padding: 1rem;
+    }
+    
+    /* Sidebar title styling */
+    .css-1d391kg h1 {
+        color: white;
+        font-weight: 600;
+        margin-bottom: 1.5rem;
+        text-align: center;
+        font-size: 1.5rem;
+    }
+    
+    /* Sidebar buttons */
+    .css-1d391kg .stButton > button {
+        background: rgba(255, 255, 255, 0.15);
+        color: white;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 8px;
+        font-weight: 500;
+        font-size: 0.85rem;
+        transition: all 0.3s ease;
+        backdrop-filter: blur(10px);
+    }
+    
+    .css-1d391kg .stButton > button:hover {
+        background: rgba(255, 255, 255, 0.25);
+        transform: translateY(-1px);
+        box-shadow: 0 3px 12px rgba(0, 0, 0, 0.15);
+        border-color: rgba(255, 255, 255, 0.4);
+    }
+    
+    /* Primary buttons in sidebar */
+    .css-1d391kg .stButton > button[kind="primary"] {
+        background: linear-gradient(45deg, #ff6b6b, #ee5a52);
+        border: none;
+        font-weight: 600;
+        box-shadow: 0 2px 8px rgba(238, 90, 82, 0.3);
+    }
+    
+    .css-1d391kg .stButton > button[kind="primary"]:hover {
+        background: linear-gradient(45deg, #ff5252, #d32f2f);
+        transform: translateY(-2px);
+        box-shadow: 0 4px 15px rgba(238, 90, 82, 0.4);
+    }
+    
+    /* Sidebar captions */
+    .css-1d391kg .css-nahz7x {
+        color: rgba(255, 255, 255, 0.8);
+        font-size: 0.8rem;
+    }
+    
+    /* Sidebar divider */
+    .css-1d391kg hr {
+        border-color: rgba(255, 255, 255, 0.3);
+        margin: 1rem 0;
+    }
+    
+    /* Main content area */
+    .css-18e3th9 {
+        padding: 2rem;
+    }
+    
+    /* Title styling */
+    h1 {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        font-weight: 700;
+        margin-bottom: 2rem;
+        text-align: center;
+        font-size: 2.5rem;
+    }
+    
+    /* Chat messages styling */
+    .stChatMessage {
+        border-radius: 15px;
+        padding: 1.5rem;
+        margin-bottom: 1rem;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    }
+    
+    .stChatMessage[data-testid="chat-message-user"] {
+        background: linear-gradient(135deg, #4a6cf7 0%, #3b5bd9 100%);
+        color: white;
+        margin-left: 2rem;
+        border: none;
+    }
+    
+    .stChatMessage[data-testid="chat-message-user"] .stMarkdown,
+    .stChatMessage[data-testid="chat-message-user"] .stMarkdown p {
+        color: white !important;
+    }
+    
+    .stChatMessage[data-testid="chat-message-assistant"] {
+        background: rgba(248, 249, 250, 0.95);
+        margin-right: 2rem;
+        border-left: 4px solid #4a6cf7;
+    }
+    
+    .stChatMessage[data-testid="chat-message-assistant"] .stMarkdown,
+    .stChatMessage[data-testid="chat-message-assistant"] .stMarkdown p {
+        color: #1a1f36 !important;
+    }
+    
+    /* Chat input styling */
     .stChatInput > div > div > textarea {
         min-height: 60px !important;
         font-size: 16px !important;
+        border-radius: 15px !important;
+        border: 2px solid #e1e5e9 !important;
+        padding: 1rem !important;
+        font-family: 'Inter', sans-serif !important;
+        transition: all 0.3s ease !important;
     }
     
-    /* Chat input container styling */
-    .stChatInput {
-        margin-top: 1rem;
+    .stChatInput > div > div > textarea:focus {
+        border-color: #667eea !important;
+        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1) !important;
+    }
+    
+    /* Expander styling */
+    .streamlit-expanderHeader {
+        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+        border-radius: 10px;
+        padding: 0.75rem;
+        font-weight: 500;
+        border: 1px solid #dee2e6;
+    }
+    
+    .streamlit-expanderContent {
+        background: #f8f9fa;
+        border-radius: 0 0 10px 10px;
+        border: 1px solid #dee2e6;
+        border-top: none;
+    }
+    
+    /* Dataframe styling */
+    .stDataFrame {
+        border-radius: 10px;
+        overflow: hidden;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    }
+    
+    /* Tab styling */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        height: 50px;
+        background: #f8f9fa;
+        border-radius: 10px 10px 0 0;
+        padding: 0 1.5rem;
+        font-weight: 500;
+        border: 1px solid #dee2e6;
+        border-bottom: none;
+    }
+    
+    .stTabs [aria-selected="true"] {
+        background: white;
+        color: #667eea;
+        border-color: #667eea;
+    }
+    
+    /* Selectbox styling */
+    .stSelectbox > div > div {
+        border-radius: 10px;
+        border: 2px solid #e1e5e9;
+        transition: all 0.3s ease;
+    }
+    
+    .stSelectbox > div > div:focus-within {
+        border-color: #667eea;
+        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
+    
+    /* Button styling */
+    .stButton > button {
+        border-radius: 10px;
+        font-weight: 500;
+        padding: 0.5rem 2rem;
+        transition: all 0.3s ease;
+        border: 2px solid transparent;
+    }
+    
+    .stButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+    }
+    
+    .stButton > button[kind="primary"] {
+        background: linear-gradient(45deg, #667eea, #764ba2);
+        color: white;
+        border: none;
+    }
+    
+    .stButton > button[kind="primary"]:hover {
+        background: linear-gradient(45deg, #5a67d8, #6b46c1);
+    }
+    
+    /* Spinner styling */
+    .stSpinner > div {
+        border-color: #667eea transparent #667eea transparent;
+    }
+    
+    /* Success/Error message styling */
+    .stSuccess {
+        background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
+        border: 1px solid #b6d7a8;
+        border-radius: 10px;
+        padding: 1rem;
+    }
+    
+    .stError {
+        background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%);
+        border: 1px solid #f1aeb5;
+        border-radius: 10px;
+        padding: 1rem;
+    }
+    
+    /* Code block styling */
+    .stCodeBlock {
+        border-radius: 10px;
+        border: 1px solid #e1e5e9;
+    }
+    
+    /* Processing text animation */
+    .processing-text {
+        background: linear-gradient(45deg, #667eea, #764ba2, #667eea);
+        background-size: 200% 200%;
+        animation: gradient 2s ease infinite;
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        font-weight: 500;
+    }
+    
+    @keyframes gradient {
+        0% { background-position: 0% 50%; }
+        50% { background-position: 100% 50%; }
+        100% { background-position: 0% 50%; }
+    }
+    
+    /* Module selector styling */
+    .css-1d391kg .stSelectbox > div > div {
+        background: rgba(255, 255, 255, 0.15);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 8px;
+        color: white;
+        backdrop-filter: blur(10px);
+        font-size: 0.9rem;
+        transition: all 0.3s ease;
+    }
+    
+    .css-1d391kg .stSelectbox > div > div:hover {
+        background: rgba(255, 255, 255, 0.25);
+        border-color: rgba(255, 255, 255, 0.4);
+    }
+    
+    .css-1d391kg .stSelectbox > div > div > div {
+        color: white;
+    }
+    
+    /* Sidebar status indicator */
+    .status-indicator {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #4ade80;
+        animation: pulse 2s infinite;
+        margin-right: 0.5rem;
+    }
+    
+    @keyframes pulse {
+        0% { opacity: 1; }
+        50% { opacity: 0.5; }
+        100% { opacity: 1; }
+    }
+    
+    /* Metric cards */
+    .metric-card {
+        background: white;
+        padding: 1.5rem;
+        border-radius: 15px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        border: 1px solid #f0f2f6;
+        text-align: center;
+        transition: all 0.3s ease;
+    }
+    
+    .metric-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+    }
+    
+    .metric-value {
+        font-size: 2rem;
+        font-weight: 700;
+        color: #667eea;
+        margin: 0;
+    }
+    
+    .metric-label {
+        color: #6c757d;
+        font-weight: 500;
+        margin-top: 0.5rem;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -43,10 +364,26 @@ st.markdown("""
 # ────────────────────────────────────────────────────────────────
 # MODULE SWITCHING
 # ────────────────────────────────────────────────────────────────
-mode = st.sidebar.selectbox(
-    "Choose POC",
-    ["SQL Query Assistant", "Data Incident Explainer"]
-)
+with st.sidebar:
+    st.markdown("""
+    <div style="text-align: center; margin-bottom: 1.5rem; padding: 0.8rem; background: rgba(255, 255, 255, 0.1); border-radius: 12px; backdrop-filter: blur(10px);">
+        <h2 style="color: white; margin: 0; font-size: 1.2rem;">🎯 Mode</h2>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    mode = st.selectbox(
+        "",
+        ["💬 Chat Assistant", "🔴 Incident Analyzer"],
+        label_visibility="collapsed"
+    )
+    
+    # Remove emoji from mode for logic
+    if "Chat Assistant" in mode:
+        mode = "SQL Query Assistant"
+    else:
+        mode = "Data Incident Explainer"
+    
+    st.markdown("---")
 
 # File path for persistent storage
 CHAT_STORAGE_FILE = Path("chat_sessions.pkl")
@@ -55,11 +392,30 @@ CHAT_STORAGE_FILE = Path("chat_sessions.pkl")
 @st.cache_resource
 def init_cohere_client():
     """Initialize Cohere client with caching"""
-    api_key = os.getenv("COHERE_API_KEY")
-    if not api_key:
-        st.error("❌ COHERE_API_KEY environment variable not set!")
-        st.stop()
-    return cohere.ClientV2(api_key=api_key)
+    with st.spinner("🔄 Initializing AI assistant..."):
+        api_key = os.getenv("COHERE_API_KEY")
+        if not api_key:
+            st.error("❌ **COHERE_API_KEY environment variable not set!**")
+            st.markdown("""
+            <div style="background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 10px; padding: 1rem; margin: 1rem 0;">
+                <p><strong>🔧 Setup Required:</strong></p>
+                <p>Please set your Cohere API key as an environment variable:</p>
+                <code>export COHERE_API_KEY=your_api_key_here</code>
+            </div>
+            """, unsafe_allow_html=True)
+            st.stop()
+        
+        # Test database connection
+        try:
+            test_session = SessionLocal()
+            test_session.execute(text("SELECT 1"))
+            test_session.close()
+            print("✅ Database connection successful")
+        except Exception as e:
+            print(f"❌ Database connection failed: {str(e)}")
+            st.error(f"❌ Database connection failed: {str(e)}")
+        
+        return cohere.ClientV2(api_key=api_key)
 
 co = init_cohere_client()
 
@@ -90,17 +446,27 @@ def save_chat_sessions_to_file(chat_sessions):
 
 def initialize_chat_system():
     """Initialize the chat system with persistent storage"""
+    # Get current mode for module-specific chats
+    current_mode = st.session_state.get('current_mode', 'SQL Query Assistant')
+    
     if "current_chat_id" not in st.session_state:
         st.session_state.current_chat_id = str(uuid.uuid4())
     
     if "chat_sessions" not in st.session_state:
         # Load from file
-        st.session_state.chat_sessions = load_chat_sessions_from_file()
+        all_chats = load_chat_sessions_from_file()
+        st.session_state.chat_sessions = all_chats
+    
+    # Get module-specific chats
+    module_key = f"{current_mode}_chats"
+    if module_key not in st.session_state.chat_sessions:
+        st.session_state.chat_sessions[module_key] = {}
     
     if "current_messages" not in st.session_state:
-        # If we have a current chat ID, try to load its messages
-        if (st.session_state.current_chat_id in st.session_state.chat_sessions):
-            st.session_state.current_messages = st.session_state.chat_sessions[st.session_state.current_chat_id]["messages"].copy()
+        # If we have a current chat ID, try to load its messages from current module
+        module_chats = st.session_state.chat_sessions[module_key]
+        if st.session_state.current_chat_id in module_chats:
+            st.session_state.current_messages = module_chats[st.session_state.current_chat_id]["messages"].copy()
         else:
             st.session_state.current_messages = []
 
@@ -118,6 +484,14 @@ def create_new_chat():
 def save_current_chat():
     """Save the current chat session"""
     if st.session_state.current_messages:
+        # Get current mode for module-specific storage
+        current_mode = st.session_state.get('current_mode', 'SQL Query Assistant')
+        module_key = f"{current_mode}_chats"
+        
+        # Ensure module storage exists
+        if module_key not in st.session_state.chat_sessions:
+            st.session_state.chat_sessions[module_key] = {}
+        
         # Create a title from the first user message (truncated)
         first_user_msg = next((msg for msg in st.session_state.current_messages if msg["role"] == "user"), None)
         if first_user_msg:
@@ -125,10 +499,11 @@ def save_current_chat():
         else:
             title = f"Chat {datetime.now().strftime('%H:%M')}"
         
-        st.session_state.chat_sessions[st.session_state.current_chat_id] = {
+        st.session_state.chat_sessions[module_key][st.session_state.current_chat_id] = {
             "title": title,
             "messages": st.session_state.current_messages.copy(),
-            "timestamp": datetime.now()
+            "timestamp": datetime.now(),
+            "module": current_mode
         }
         
         # Save to file
@@ -139,18 +514,26 @@ def load_chat(chat_id):
     # Save current chat first
     save_current_chat()
     
-    # Load selected chat
-    if chat_id in st.session_state.chat_sessions:
+    # Get current mode for module-specific loading
+    current_mode = st.session_state.get('current_mode', 'SQL Query Assistant')
+    module_key = f"{current_mode}_chats"
+    
+    # Load selected chat from current module
+    if module_key in st.session_state.chat_sessions and chat_id in st.session_state.chat_sessions[module_key]:
         st.session_state.current_chat_id = chat_id
-        st.session_state.current_messages = st.session_state.chat_sessions[chat_id]["messages"].copy()
+        st.session_state.current_messages = st.session_state.chat_sessions[module_key][chat_id]["messages"].copy()
     else:
         st.session_state.current_chat_id = chat_id
         st.session_state.current_messages = []
 
 def delete_chat(chat_id):
     """Delete a chat session"""
-    if chat_id in st.session_state.chat_sessions:
-        del st.session_state.chat_sessions[chat_id]
+    # Get current mode for module-specific deletion
+    current_mode = st.session_state.get('current_mode', 'SQL Query Assistant')
+    module_key = f"{current_mode}_chats"
+    
+    if module_key in st.session_state.chat_sessions and chat_id in st.session_state.chat_sessions[module_key]:
+        del st.session_state.chat_sessions[module_key][chat_id]
         
         # Save to file
         save_chat_sessions_to_file(st.session_state.chat_sessions)
@@ -230,17 +613,17 @@ def execute_sql_query(sql: str) -> tuple[pd.DataFrame, str, bool]:
             cols = result.keys()
             
             if not rows:
-                return pd.DataFrame(), "No rows returned from the query.", True
+                return pd.DataFrame(), "🔍 No rows returned from the query.", True
             
             # Convert to DataFrame
             df = pd.DataFrame(rows, columns=cols)
-            return df, f"Query executed successfully. Found {len(df)} rows.", True
+            return df, f"✅ Query executed successfully. Found {len(df)} rows.", True
             
         finally:
             session.close()
             
     except Exception as e:
-        return pd.DataFrame(), f"Error executing SQL: {str(e)}", False
+        return pd.DataFrame(), f"❌ Error executing SQL: {str(e)}", False
 
 def generate_sql_query(user_question: str) -> str:
     """Generate SQL query using Cohere API"""
@@ -490,6 +873,8 @@ def explain_incident_agent(log_id: int) -> str:
     Analyze and explain an incident by fetching log details and providing 
     root cause analysis with resolution steps.
     """
+    print(f"DEBUG: Starting analysis for log_id: {log_id}")
+    
     user_msg = (
         f"Please analyze incident log ID {log_id}. "
         f"First, fetch the failure details using the log ID. "
@@ -503,6 +888,7 @@ def explain_incident_agent(log_id: int) -> str:
     )
     
     try:
+        print(f"DEBUG: Making first API call...")
         # First API call with tools
         first_response = co.chat(
             model="command-r-08-2024",
@@ -511,11 +897,15 @@ def explain_incident_agent(log_id: int) -> str:
             temperature=0.1
         )
         
+        print(f"DEBUG: First response received: {hasattr(first_response, 'message')}")
+        
         if not hasattr(first_response, 'message') or first_response.message is None:
             return "Error: No response received from the model"
         
         msg = first_response.message
         tool_calls = getattr(msg, 'tool_calls', None)
+        
+        print(f"DEBUG: Tool calls found: {len(tool_calls) if tool_calls else 0}")
         
         if not tool_calls or len(tool_calls) == 0:
             # No tool calls made - return direct response or error
@@ -645,69 +1035,143 @@ def explain_incident_agent(log_id: int) -> str:
         else:
             final_content = str(content)
         
+        
         if not final_content or final_content.strip() == '':
             return f"Error: Empty final response. Tool results were: {tools_summary}"
         
+        print(f"DEBUG: Final content length: {len(final_content)}")
+        print(f"DEBUG: Final content preview: {final_content[:200]}...")
         return final_content
         
     except Exception as e:
         import traceback
         error_trace = traceback.format_exc()
+        print(f"DEBUG: Exception occurred: {str(e)}")
         return f"Error in incident analysis: {str(e)}\n\nFull traceback:\n{error_trace}"
 
 def render_sidebar():
     """Render the chat history sidebar"""
     with st.sidebar:
-        st.title("💬 Chats")
+        # Get current mode for display
+        current_mode = st.session_state.get('current_mode', 'SQL Query Assistant')
+        mode_emoji = "💬" if "SQL" in current_mode else "🔴"
+        mode_short = "SQL" if "SQL" in current_mode else "Incident"
         
-        # New chat button
-        if st.button("➕ New Chat", use_container_width=True, type="primary"):
+        # Compact sidebar header with status
+        st.markdown(f"""
+        <div style="text-align: center; margin-bottom: 1.5rem;">
+            <h1 style="margin: 0; font-size: 1.4rem; color: white;">
+                <span class="status-indicator"></span>{mode_emoji} {mode_short} Chats
+            </h1>
+            <small style="color: rgba(255, 255, 255, 0.6);">AI Ready</small>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Compact new chat button
+        if st.button("➕ New", use_container_width=True, type="primary"):
             create_new_chat()
             st.rerun()
         
-        st.divider()
+        st.markdown("---")
         
-        # Display chat sessions - removed the info message for empty state
+        # Display chat sessions with more compact styling
         if st.session_state.chat_sessions:
-            # Sort chats by timestamp (newest first)
-            sorted_chats = sorted(
-                st.session_state.chat_sessions.items(),
-                key=lambda x: x[1]["timestamp"],
-                reverse=True
-            )
+            # Get current mode for module-specific chat display
+            current_mode = st.session_state.get('current_mode', 'SQL Query Assistant')
+            module_key = f"{current_mode}_chats"
             
-            for chat_id, chat_data in sorted_chats:
-                col1, col2 = st.columns([4, 1])
+            # Get chats for current module only
+            module_chats = st.session_state.chat_sessions.get(module_key, {})
+            
+            if module_chats:
+                # Sort chats by timestamp (newest first)
+                sorted_chats = sorted(
+                    module_chats.items(),
+                    key=lambda x: x[1]["timestamp"],
+                    reverse=True
+                )
                 
-                with col1:
-                    # Chat button with current chat highlighting
-                    is_current = chat_id == st.session_state.current_chat_id
-                    button_label = f"{'🟢 ' if is_current else ''}{chat_data['title']}"
+                # Show only recent 5 chats for cleaner look
+                for chat_id, chat_data in sorted_chats[:5]:
+                    col1, col2 = st.columns([3.5, 0.5])
                     
-                    if st.button(
-                        button_label,
-                        key=f"chat_{chat_id}",
-                        use_container_width=True,
-                        type="primary" if is_current else "secondary"
-                    ):
-                        if chat_id != st.session_state.current_chat_id:
-                            load_chat(chat_id)
+                    with col1:
+                        # Chat button with current chat highlighting
+                        is_current = chat_id == st.session_state.current_chat_id
+                        # Truncate title to fit better
+                        title = chat_data['title'][:25] + "..." if len(chat_data['title']) > 25 else chat_data['title']
+                        button_label = f"{'🟢' if is_current else '💭'} {title}"
+                        
+                        if st.button(
+                            button_label,
+                            key=f"chat_{chat_id}",
+                            use_container_width=True,
+                            type="primary" if is_current else "secondary"
+                        ):
+                            if chat_id != st.session_state.current_chat_id:
+                                load_chat(chat_id)
+                                st.rerun()
+                    
+                    with col2:
+                        # Compact delete button
+                        if st.button("🗑", key=f"delete_{chat_id}", help="Delete"):
+                            delete_chat(chat_id)
                             st.rerun()
-                
-                with col2:
-                    # Delete button
-                    if st.button("🗑️", key=f"delete_{chat_id}", help="Delete chat"):
-                        delete_chat(chat_id)
-                        st.rerun()
-                
-                # Show timestamp
-                st.caption(chat_data["timestamp"].strftime("%m/%d %H:%M"))
-                st.divider()
+                    
+                    # Compact timestamp
+                    timestamp_str = chat_data["timestamp"].strftime("%m/%d")
+                    st.markdown(f"<small style='color: rgba(255, 255, 255, 0.5); font-size: 0.7rem;'>{timestamp_str}</small>", unsafe_allow_html=True)
+                    
+                # Show more chats indicator if there are more than 5
+                if len(sorted_chats) > 5:
+                    st.markdown(f"<small style='color: rgba(255, 255, 255, 0.6); text-align: center; display: block;'>+{len(sorted_chats) - 5} more chats</small>", unsafe_allow_html=True)
+            else:
+                # Compact empty state for current module
+                module_name = "SQL" if "SQL" in current_mode else "Incident"
+                st.markdown(f"""
+                <div style="text-align: center; color: rgba(255, 255, 255, 0.6); padding: 1rem 0;">
+                    <p style="margin: 0;">No {module_name} chats yet</p>
+                    <small>Start chatting!</small>
+                </div>
+                """, unsafe_allow_html=True)
         else:
-            # Just show empty space instead of the info message
-            st.markdown("<div style='height: 100px;'></div>", unsafe_allow_html=True)
+            # Compact empty state
+            st.markdown("""
+            <div style="text-align: center; color: rgba(255, 255, 255, 0.6); padding: 1rem 0;">
+                <p style="margin: 0;">No chats yet</p>
+                <small>Start chatting!</small>
+            </div>
+            """, unsafe_allow_html=True)
+
+def render_footer():
+    """Render a beautiful footer"""
+    st.markdown("---")
+    st.markdown("""
+    <div style="text-align: center; padding: 2rem 0; color: #6c757d;">
+        <p style="margin: 0; font-size: 0.9rem;">
+            🚀 <strong>STC Query Assistant</strong> | Powered by AI
+        </p>
+        <p style="margin: 0.5rem 0 0 0; font-size: 0.8rem;">
+            Built with ❤️ using Streamlit & Cohere | 
+            <a href="#" style="color: #667eea; text-decoration: none;">Documentation</a> | 
+            <a href="#" style="color: #667eea; text-decoration: none;">Support</a>
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
 
 def main():
+    # Set current mode in session state for module-specific chats
+    if 'current_mode' not in st.session_state:
+        st.session_state.current_mode = mode
+    elif st.session_state.current_mode != mode:
+        # Mode changed - save current chat and switch context
+        if st.session_state.get('current_messages'):
+            save_current_chat()
+        st.session_state.current_mode = mode
+        # Start fresh for the new module
+        st.session_state.current_chat_id = str(uuid.uuid4())
+        st.session_state.current_messages = []
+    
     # Initialize chat system
     initialize_chat_system()
     
@@ -715,90 +1179,216 @@ def main():
     render_sidebar()
     
     if mode == "SQL Query Assistant":
-        # ── Existing SQL chat UI ───────────────────────
-        st.title("💬 STC Chat Assistant")
+        # Enhanced SQL Query Assistant UI
+        st.markdown("""
+        <div style="text-align: center; margin-bottom: 3rem;">
+            <h1 style="margin: 0;">💬 STC Chat Assistant</h1>
+            <p style="color: #6c757d; font-size: 1.2rem; margin-top: 0.5rem;">Ask questions about your business data in natural language</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Welcome cards when no messages
+        if not st.session_state.current_messages:
+            st.markdown("### 🚀 Get Started")
+            
+            # Sample questions in cards
+            col1, col2, col3 = st.columns(3)
+            
+            sample_questions = [
+                "How many units of Product A were sold overall?",
+                "Which customer segments had the highest churn in january 2024?",
+                "What were the sales numbers in Q4 2024 for north region?"
+            ]
+            
+            for i, (col, question) in enumerate(zip([col1, col2, col3], sample_questions)):
+                with col:
+                    if st.button(f"💡 {question}", key=f"sample_{i}", use_container_width=True):
+                        # Process the question (this will add both user and assistant messages)
+                        try:
+                            with st.spinner("🤔 Processing your question..."):
+                                process_user_question(question)
+                            
+                            # Save and rerun to display the conversation
+                            save_current_chat()
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Error processing question: {str(e)}")
+                            # Add error message to chat
+                            add_message("assistant", f"I encountered an error while processing your question: {str(e)}")
+                            save_current_chat()
+                            st.rerun()
+            
+            st.markdown("---")
+            st.markdown("### 💡 **Tips for better results:**")
+            st.markdown("""
+            - Be specific about time periods and metrics
+            - Ask about sales, revenue, customers, or churn data
+            - Use natural language - no need for technical terms
+            """)
         
         # Display current chat messages
         for message in st.session_state.current_messages:
             with st.chat_message(message["role"]):
+                # Display the message content
                 st.markdown(message["content"])
                 
                 # Show optional details for data queries
                 if message["role"] == "assistant" and "sql_query" in message:
-                    with st.expander("View details", expanded=False):
-                        if "data" in message and not message["data"].empty:
-                            tab1, tab2 = st.tabs(["📋 Data", "📥 Export"])
-                            with tab1:
-                                st.dataframe(message["data"], use_container_width=True)
-                                st.caption(f"{len(message['data'])} rows")
-                            with tab2:
-                                csv = message["data"].to_csv(index=False)
-                                st.download_button(
-                                    label="Download CSV",
-                                    data=csv,
-                                    file_name=f"data_{message['timestamp'].strftime('%Y%m%d_%H%M%S')}.csv",
-                                    mime="text/csv",
-                                    key=f"download_{message['id']}"
-                                )
-                                st.markdown("**Generated SQL:**")
-                                st.code(message["sql_query"], language="sql")
+                    with st.expander("🔍 View Generated SQL", expanded=False):
+                        st.markdown("""
+                        <div style="background: #1e1e1e; 
+                                    border-radius: 8px; 
+                                    border: 1px solid #2d2d2d;
+                                    margin-top: 0.5rem;">
+                        """, unsafe_allow_html=True)
+                        st.code(message["sql_query"], language="sql")
+                        st.markdown("</div>", unsafe_allow_html=True)
         
-        # Chat input
-        if prompt := st.chat_input("Ask me about your business data..."):
+        # Enhanced chat input
+        if prompt := st.chat_input("💭 Ask me about your business data..."):
             with st.chat_message("user"):
                 st.markdown(prompt)
             with st.chat_message("assistant"):
                 placeholder = st.empty()
-                placeholder.markdown('<p class="processing-text">Processing your question...</p>', unsafe_allow_html=True)
+                placeholder.markdown('<p class="processing-text">🤔 Processing your question...</p>', unsafe_allow_html=True)
                 process_user_question(prompt)
                 placeholder.empty()
                 latest = st.session_state.current_messages[-1]
                 st.markdown(latest["content"])
                 
                 if "sql_query" in latest:
-                    with st.expander("View details", expanded=False):
-                        if "data" in latest and not latest["data"].empty:
-                            tab1, tab2 = st.tabs(["📋 Data", "📥 Export"])
-                            with tab1:
-                                st.dataframe(latest["data"], use_container_width=True)
-                                st.caption(f"{len(latest['data'])} rows")
-                            with tab2:
-                                csv = latest["data"].to_csv(index=False)
-                                st.download_button(
-                                    label="Download CSV",
-                                    data=csv,
-                                    file_name=f"data_{latest['timestamp'].strftime('%Y%m%d_%H%M%S')}.csv",
-                                    mime="text/csv",
-                                    key=f"download_latest_{latest['id']}"
-                                )
-                                st.markdown("**Generated SQL:**")
-                                st.code(latest["sql_query"], language="sql")
+                    with st.expander("🔍 View Generated SQL", expanded=False):
+                        st.markdown("""
+                        <div style="background: #1e1e1e; 
+                                    border-radius: 8px; 
+                                    border: 1px solid #2d2d2d;
+                                    margin-top: 0.5rem;">
+                        """, unsafe_allow_html=True)
+                        st.code(latest["sql_query"], language="sql")
+                        st.markdown("</div>", unsafe_allow_html=True)
             
             save_current_chat()
             st.rerun()
     
     else:
-        # ── Data Incident Explainer UI ───────────────
-        st.title("🔴 Data Pipeline Incident Explainer")
+        # Enhanced Data Incident Explainer UI
+        st.markdown("""
+        <div style="text-align: center; margin-bottom: 3rem;">
+            <h1 style="margin: 0;">🔴 Data Pipeline Incident Explainer</h1>
+            <p style="color: #6c757d; font-size: 1.2rem; margin-top: 0.5rem;">Analyze failed data pipeline runs and get resolution steps</p>
+        </div>
+        """, unsafe_allow_html=True)
         
-        # Fetch recent failures
+        # Metrics dashboard
+        col1, col2, col3 = st.columns(3)
+        
+        # Fetch failure statistics
         session = SessionLocal()
+        total_failures = session.execute(
+            text("SELECT COUNT(*) FROM job_logs WHERE status='FAILURE'")
+        ).fetchone()[0]
+        
+        recent_failures = session.execute(
+            text("SELECT COUNT(*) FROM job_logs WHERE status='FAILURE' AND run_timestamp >= NOW() - INTERVAL '24 hours'")
+        ).fetchone()[0]
+        
+        unique_jobs = session.execute(
+            text("SELECT COUNT(DISTINCT job_name) FROM job_logs WHERE status='FAILURE'")
+        ).fetchone()[0]
+        
+        with col1:
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-value">{total_failures}</div>
+                <div class="metric-label">Total Failures</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col2:
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-value">{recent_failures}</div>
+                <div class="metric-label">Last 24 Hours</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col3:
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-value">{unique_jobs}</div>
+                <div class="metric-label">Affected Jobs</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        st.markdown("---")
+        
+        # Failure selection section
+        st.markdown("### 📋 Select Failed Run")
+        
+        # Fetch recent failures with better formatting
         rows = session.execute(
             text("SELECT log_id, job_name, run_timestamp FROM job_logs WHERE status='FAILURE' ORDER BY run_timestamp DESC LIMIT 50")
         ).fetchall()
         session.close()
         
-        options = [
-            f"{r._mapping['log_id']} | {r._mapping['job_name']} @ {r._mapping['run_timestamp']}"
-            for r in rows
-        ]
-        selected = st.selectbox("Select a failed run", options)
-        
-        if st.button("Explain Incident"):
-            log_id = int(selected.split("|")[0].strip())
-            with st.spinner("Generating incident report…"):
-                explanation = explain_incident_agent(log_id)
-            st.markdown(explanation)
+        if rows:
+            options = [
+                f"🔴 {r._mapping['log_id']} | {r._mapping['job_name']} @ {r._mapping['run_timestamp'].strftime('%Y-%m-%d %H:%M:%S')}"
+                for r in rows
+            ]
+            selected = st.selectbox(
+                "Choose a failed pipeline run to analyze:",
+                options,
+                help="Select from the most recent 50 failures"
+            )
+            
+            if st.button("🔍 Explain Incident", type="primary", use_container_width=True):
+                log_id = int(selected.split("|")[0].strip().replace("🔴 ", ""))
+                
+                with st.spinner("🔄 Analyzing incident and generating report..."):
+                    try:
+                        explanation = explain_incident_agent(log_id)
+                        st.success("✅ Analysis completed!")
+                    except Exception as e:
+                        st.error(f"❌ Error during analysis: {str(e)}")
+                        explanation = f"Error occurred: {str(e)}"
+                
+                # Display the explanation
+                st.markdown("### 📊 Incident Analysis Report")
+                
+                if explanation and explanation.strip():
+                    # Display in a styled container
+                    st.markdown("""
+                    <div style="background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); 
+                                padding: 1.5rem; 
+                                border-radius: 12px; 
+                                border-left: 4px solid #dc3545; 
+                                box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+                                margin: 1rem 0;">
+                    """, unsafe_allow_html=True)
+                    
+                    st.markdown(explanation)
+                    
+                    st.markdown("</div>", unsafe_allow_html=True)
+                    
+                    # Show character count for debugging
+                    st.caption(f"Report length: {len(explanation)} characters")
+                else:
+                    st.error("❌ No report content was generated")
+                    st.info(f"🔧 Debug info: explanation = '{explanation}' (type: {type(explanation)})")
+                    
+                    # Try to get some basic info manually
+                    st.markdown("**Attempting manual data fetch:**")
+                    try:
+                        failure_data = fetch_failure(log_id)
+                        st.json(failure_data)
+                    except Exception as e:
+                        st.error(f"Manual fetch failed: {str(e)}")
+        else:
+            st.info("ℹ️ No failed pipeline runs found in the database.")
+
+    # Render footer
+    render_footer()
 
 if __name__ == "__main__":
     main()
