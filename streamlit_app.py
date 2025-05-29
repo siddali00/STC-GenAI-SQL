@@ -1151,9 +1151,7 @@ def render_footer():
             🚀 <strong>STC Query Assistant</strong> | 
         </p>
         <p style="margin: 0.5rem 0 0 0; font-size: 0.8rem;">
-            Built using Streamlit & Cohere | 
-            <a href="#" style="color: #667eea; text-decoration: none;">Documentation</a> | 
-            <a href="#" style="color: #667eea; text-decoration: none;">Support</a>
+            Built using Streamlit & Cohere 
         </p>
     </div>
     """, unsafe_allow_html=True)
