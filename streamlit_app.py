@@ -8,8 +8,15 @@ from sqlalchemy import text
 from database import SessionLocal
 import json
 import uuid
-import pickle
 from pathlib import Path
+
+# Import simplified session management
+from session_manager import (
+    initialize_chat_system, create_new_chat_session, 
+    save_current_session, load_session, delete_session,
+    load_all_sessions, add_message, get_session_memory,
+    get_or_create_session_id
+)
 
 # Page configuration
 st.set_page_config(
@@ -405,7 +412,7 @@ with st.sidebar:
     
     st.markdown("---")
 
-# File path for persistent storage
+# File path for persistent storage (deprecated - now using database)
 CHAT_STORAGE_FILE = Path("chat_sessions.pkl")
 
 # Initialize Cohere client
@@ -446,125 +453,12 @@ Available Tables:
 - churn(month DATE, segment TEXT, churned_customers INTEGER)
 """
 
-def load_chat_sessions_from_file():
-    """Load chat sessions from file"""
-    try:
-        if CHAT_STORAGE_FILE.exists():
-            with open(CHAT_STORAGE_FILE, 'rb') as f:
-                return pickle.load(f)
-    except Exception as e:
-        st.error(f"Error loading chat sessions: {e}")
-    return {}
-
-def save_chat_sessions_to_file(chat_sessions):
-    """Save chat sessions to file"""
-    try:
-        with open(CHAT_STORAGE_FILE, 'wb') as f:
-            pickle.dump(chat_sessions, f)
-    except Exception as e:
-        st.error(f"Error saving chat sessions: {e}")
-
-def initialize_chat_system():
-    """Initialize the chat system with persistent storage"""
-    # Get current mode for module-specific chats
-    current_mode = st.session_state.get('current_mode', 'SQL Query Assistant')
-    
-    if "current_chat_id" not in st.session_state:
-        st.session_state.current_chat_id = str(uuid.uuid4())
-    
-    if "chat_sessions" not in st.session_state:
-        # Load from file
-        all_chats = load_chat_sessions_from_file()
-        st.session_state.chat_sessions = all_chats
-    
-    # Get module-specific chats
-    module_key = f"{current_mode}_chats"
-    if module_key not in st.session_state.chat_sessions:
-        st.session_state.chat_sessions[module_key] = {}
-    
-    if "current_messages" not in st.session_state:
-        # If we have a current chat ID, try to load its messages from current module
-        module_chats = st.session_state.chat_sessions[module_key]
-        if st.session_state.current_chat_id in module_chats:
-            st.session_state.current_messages = module_chats[st.session_state.current_chat_id]["messages"].copy()
-        else:
-            st.session_state.current_messages = []
-
-def create_new_chat():
-    """Create a new chat session"""
-    # Save current chat if it has messages
-    if st.session_state.current_messages:
-        save_current_chat()
-    
-    # Create new chat
-    new_chat_id = str(uuid.uuid4())
-    st.session_state.current_chat_id = new_chat_id
-    st.session_state.current_messages = []
-
-def save_current_chat():
-    """Save the current chat session"""
-    if st.session_state.current_messages:
-        # Get current mode for module-specific storage
-        current_mode = st.session_state.get('current_mode', 'SQL Query Assistant')
-        module_key = f"{current_mode}_chats"
-        
-        # Ensure module storage exists
-        if module_key not in st.session_state.chat_sessions:
-            st.session_state.chat_sessions[module_key] = {}
-        
-        # Create a title from the first user message (truncated)
-        first_user_msg = next((msg for msg in st.session_state.current_messages if msg["role"] == "user"), None)
-        if first_user_msg:
-            title = first_user_msg["content"][:40] + "..." if len(first_user_msg["content"]) > 40 else first_user_msg["content"]
-        else:
-            title = f"Chat {datetime.now().strftime('%H:%M')}"
-        
-        st.session_state.chat_sessions[module_key][st.session_state.current_chat_id] = {
-            "title": title,
-            "messages": st.session_state.current_messages.copy(),
-            "timestamp": datetime.now(),
-            "module": current_mode
-        }
-        
-        # Save to file
-        save_chat_sessions_to_file(st.session_state.chat_sessions)
-
-def load_chat(chat_id):
-    """Load a specific chat session"""
-    # Save current chat first
-    save_current_chat()
-    
-    # Get current mode for module-specific loading
-    current_mode = st.session_state.get('current_mode', 'SQL Query Assistant')
-    module_key = f"{current_mode}_chats"
-    
-    # Load selected chat from current module
-    if module_key in st.session_state.chat_sessions and chat_id in st.session_state.chat_sessions[module_key]:
-        st.session_state.current_chat_id = chat_id
-        st.session_state.current_messages = st.session_state.chat_sessions[module_key][chat_id]["messages"].copy()
-    else:
-        st.session_state.current_chat_id = chat_id
-        st.session_state.current_messages = []
-
-def delete_chat(chat_id):
-    """Delete a chat session"""
-    # Get current mode for module-specific deletion
-    current_mode = st.session_state.get('current_mode', 'SQL Query Assistant')
-    module_key = f"{current_mode}_chats"
-    
-    if module_key in st.session_state.chat_sessions and chat_id in st.session_state.chat_sessions[module_key]:
-        del st.session_state.chat_sessions[module_key][chat_id]
-        
-        # Save to file
-        save_chat_sessions_to_file(st.session_state.chat_sessions)
-        
-        # If we're deleting the current chat, create a new one
-        if st.session_state.current_chat_id == chat_id:
-            create_new_chat()
-
 def classify_user_intent(user_question: str) -> str:
     """Classify user intent to determine if it's data-related, greeting, or irrelevant"""
     try:
+        # Get conversation history for context
+        conversation_history = get_session_memory()
+        
         system_prompt = (
             """You are a classifier for user intents in a data analysis chat system. 
 
@@ -573,15 +467,24 @@ def classify_user_intent(user_question: str) -> str:
             - 'greeting': Greetings, hellos, how are you, etc.
             - 'irrelevant': Questions not related to data analysis (weather, sports, personal questions, etc.)
             
+            Consider the conversation history to better understand context. If the user is following up on a previous data-related conversation, classify as 'data_query'.
+            
             Return ONLY the category name, nothing else."""
         )
         
+        # Build messages array with conversation history
+        messages = [{"role": "system", "content": system_prompt}]
+        
+        # Add conversation history for context
+        if conversation_history:
+            messages.extend(conversation_history)
+        
+        # Add current user question
+        messages.append({"role": "user", "content": user_question})
+        
         resp = co.chat(
             model="command-r-08-2024",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_question}
-            ]
+            messages=messages
         )
         
         intent = resp.message.content[0].text.strip().lower()
@@ -594,25 +497,39 @@ def classify_user_intent(user_question: str) -> str:
 def generate_contextual_response(user_question: str, intent: str) -> str:
     """Generate a contextual response based on user intent using Cohere"""
     try:
+        # Get conversation history for context
+        conversation_history = get_session_memory()
+        
         if intent == 'data_query':
             system_prompt = (
-                """You are a helpful business data assistant. The user is asking about business data analysis, but you don't have access to their specific data right now. Explain that you can help them analyze their sales, customer, and churn data, and ask them to be more specific about what they'd like to know. Be friendly and professional."""
+                """You are a helpful business data assistant. The user is asking about business data analysis, but you don't have access to their specific data right now. Explain that you can help them analyze their sales, customer, and churn data, and ask them to be more specific about what they'd like to know. Be friendly and professional.
+                
+                Consider the conversation history to provide contextual responses. If they've asked similar questions before, acknowledge that and build upon previous discussions."""
             )
         elif intent == 'greeting':
             system_prompt = (
-                """You are a friendly business data assistant. The user is greeting you. Respond naturally and let them know you can help them analyze their business data including sales, customers, and churn metrics. Be conversational and welcoming."""
+                """You are a friendly business data assistant. The user is greeting you. Respond naturally and let them know you can help them analyze their business data including sales, customers, and churn metrics. Be conversational and welcoming.
+                
+                If there's conversation history, acknowledge any previous interactions warmly."""
             )
         else:  # irrelevant
             system_prompt = (
                 "You are a business data assistant. The user is asking about something unrelated to business data analysis. Politely acknowledge their question but redirect them to ask about business data, sales, customers, or analytics instead. Be friendly but stay focused on your role."
             )
         
+        # Build messages array with conversation history
+        messages = [{"role": "system", "content": system_prompt}]
+        
+        # Add conversation history for context
+        if conversation_history:
+            messages.extend(conversation_history)
+        
+        # Add current user question
+        messages.append({"role": "user", "content": user_question})
+        
         resp = co.chat(
             model="command-r-08-2024",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_question}
-            ]
+            messages=messages
         )
         return resp.message.content[0].text.strip()
         
@@ -681,10 +598,17 @@ def translate_to_english(text: str) -> str:
 
 
 def generate_sql_query(user_question: str) -> str:
-    """Generate SQL query using Cohere API"""
-
+    """Generate SQL query using Cohere API with conversation history for context"""
+    
     english_question = translate_to_english(user_question)
+    
     try:
+        # Get conversation history for context
+        conversation_history = get_session_memory()
+        print(f"🔍 SQL Generation - Conversation History: {conversation_history}")
+        print(f"🔍 Current Question: {user_question}")
+        print(f"🔍 English Translation: {english_question}")
+        
         system_prompt = (
             """You are a SQL assistant. Given a natural-language question and a database schema, generate a valid PostgreSQL query.
             
@@ -695,7 +619,7 @@ def generate_sql_query(user_question: str) -> str:
             4. **For churn analysis, use the correct table structure provided in the schema**
             5. **If asking about churned customers, look for churn-related columns like `churn_status`, `churned`, or similar**
             6. **For time periods, use the actual date columns in the database**
-            7.*For product filtering: Use = (exact match) for single letters/numbers, ILIKE for partial text**
+            7. **For product filtering: Use = (exact match) for single letters/numbers, ILIKE for partial text**
                 PRODUCT FILTERING EXAMPLES:
                 - "Product A" → WHERE product ILIKE 'Product A'
                 - "المنتج A" → WHERE product ILIKE 'Product A'
@@ -705,6 +629,34 @@ def generate_sql_query(user_question: str) -> str:
                 - "المنطقة A" → WHERE region ILIKE 'Region A'
                 - "الشمالية" → WHERE region ILIKE 'North'
             
+            **CRITICAL - YEAR-OVER-YEAR GROWTH CALCULATIONS**:
+            - **AVOID complex window functions with GROUP BY** - they cause PostgreSQL errors
+            - **For growth percentage between years**, use simple conditional aggregation:
+              ```sql
+              SELECT 
+                  SUM(CASE WHEN EXTRACT(YEAR FROM date) = 2023 THEN revenue ELSE 0 END) AS revenue_2023,
+                  SUM(CASE WHEN EXTRACT(YEAR FROM date) = 2024 THEN revenue ELSE 0 END) AS revenue_2024,
+                  ((SUM(CASE WHEN EXTRACT(YEAR FROM date) = 2024 THEN revenue ELSE 0 END) - 
+                    SUM(CASE WHEN EXTRACT(YEAR FROM date) = 2023 THEN revenue ELSE 0 END)) / 
+                   NULLIF(SUM(CASE WHEN EXTRACT(YEAR FROM date) = 2023 THEN revenue ELSE 0 END), 0)) * 100 AS growth_percentage
+              FROM sales 
+              WHERE EXTRACT(YEAR FROM date) IN (2023, 2024);
+              ```
+            - **For comparing years**, always use CASE WHEN statements instead of window functions
+            - **Use NULLIF() to prevent division by zero errors**
+            
+            **CRITICAL - CONVERSATION CONTEXT & FOLLOW-UP QUESTIONS**:
+            - **ANALYZE the conversation history carefully** to understand what the user previously asked about
+            - **INHERIT the same data type, metrics, and structure** from previous queries when user asks follow-up questions
+            - **EXAMPLES of follow-up handling**:
+                * Previous: "Sales data for January 2024" → Current: "What about February?" → Generate: Sales data for February 2024
+                * Previous: "Revenue by region in Q1" → Current: "Show me Q2" → Generate: Revenue by region in Q2
+                * Previous: "Product A sales" → Current: "What about Product B?" → Generate: Product B sales with same structure
+                * Previous: "Churn in North region" → Current: "How about South?" → Generate: Churn in South region
+            - **RECOGNIZE implicit references**: "last month", "next quarter", "same period", "other regions", etc.
+            - **MAINTAIN consistency** in date formats, column selections, and aggregation methods from previous queries
+            - **BUILD UPON** previous analysis rather than starting fresh each time
+            
             Schema Information:
             - Always refer to the actual column names in the database
             - Use proper date filtering with DATE columns
@@ -713,27 +665,41 @@ def generate_sql_query(user_question: str) -> str:
             Return ONLY the SQL query, no explanation or markdown formatting."""
         )
         
+        # Build messages array with conversation history
+        messages = [{"role": "system", "content": system_prompt}]
+        
+        # Add conversation history for context
+        if conversation_history:
+            messages.extend(conversation_history)
+        else:
+            print("🔍 No conversation history available")
+        
+        # Add current question with schema info
         user_prompt = f"Database Schema:{SCHEMA_INFO}\n Original Question: {user_question}\n English Translation: {english_question}"
+        messages.append({"role": "user", "content": user_prompt})
+        
         
         resp = co.chat(
             model="command-r-08-2024",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ]
+            messages=messages
         )
         
         sql = resp.message.content[0].text.strip()
         # Remove any markdown formatting
         sql = re.sub(r'```sql\n?|```\n?', '', sql).strip()
+        
+        
         return sql
         
     except Exception as e:
         return f"Error generating SQL: {str(e)}"
 
 def generate_natural_language_response(user_question: str, sql_query: str, df: pd.DataFrame, execution_status: str, success: bool) -> str:
-    """Generate a natural language response based on the query results"""
+    """Generate a natural language response based on the query results with conversation history"""
     try:
+        # Get conversation history for context
+        conversation_history = get_session_memory()
+        
         if not success:
             return f"I encountered an error while analyzing your data: {execution_status}. Could you try rephrasing your question?"
         
@@ -748,45 +714,57 @@ def generate_natural_language_response(user_question: str, sql_query: str, df: p
             data_summary += f"Sample data:\n{df.head(5).to_string(index=False)}"
         
         system_prompt = (
-            "You are a friendly business data analyst. Based on a user's question and the query results,provide a conversational summary of the findings. Be helpful, insightful, and highlight key business insights. Keep it natural and easy to understand. Keep your answer short and to the point. Do not go into depths explaining the data results. Keep it simple and concise. Respond in the language of the user's question."
+            """You are a friendly business data analyst. Based on a user's question and the query results, provide a conversational summary of the findings. Be helpful, insightful, and highlight key business insights. Keep it natural and easy to understand. Keep your answer short and to the point. Do not go into depths explaining the data results. Keep it simple and concise. Respond in the language of the user's question.
+            
+            **CONVERSATION CONTEXT & FOLLOW-UP HANDLING**:
+            - **ANALYZE conversation history** to understand if this is a follow-up question
+            - **REFERENCE previous findings** when relevant (e.g., "Compared to January's results...", "Building on the previous analysis...")
+            - **ACKNOWLEDGE progression** of the analysis (e.g., "Now looking at February data...", "Moving to the next period...")
+            - **MAKE CONNECTIONS** between current and previous results when appropriate
+            - **IDENTIFY PATTERNS** across time periods or categories if user is comparing
+            - **PROVIDE CONTEXT** for follow-up questions (e.g., "This continues the trend from...", "Unlike the previous month...")
+            
+            **EXAMPLES**:
+            - If previous was January sales and current is February sales, say: "Looking at February sales data, here's what I found..."
+            - If comparing regions after a previous regional analysis: "Moving to the [new region], the data shows..."
+            - For time-based follow-ups: "For this period, the results show..." and compare if relevant"""
         )
         
+        # Build messages array with conversation history
+        messages = [{"role": "system", "content": system_prompt}]
+        
+        # Add conversation history for context (excluding the last user message since we're adding it separately)
+        if conversation_history:
+            # Remove the last message since it's the current question
+            context_history = conversation_history[:-1] if len(conversation_history) > 0 else []
+            messages.extend(context_history)
+        
+        # Add current analysis
         user_prompt = f"""
 User Question: {user_question}
+SQL Query Used: {sql_query}
 Results Summary: {data_summary}
 
-Please provide a natural, conversational response summarizing these findings and any business insights.
+Please provide a natural, conversational response summarizing these findings and any business insights. Consider the conversation history to provide contextual analysis.
 """
+        messages.append({"role": "user", "content": user_prompt})
         
         resp = co.chat(
             model="command-r-08-2024",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ]
+            messages=messages
         )
         
-        return resp.message.content[0].text.strip()
+        response = resp.message.content[0].text.strip()
+        
+        return response
         
     except Exception as e:
         return f"I found some data for your question ({len(df)} records), but had trouble summarizing it. Could you try asking in a different way?"
 
-def add_message(role: str, content: str, metadata: dict = None):
-    """Add a message to the current chat"""
-    message = {
-        "role": role,
-        "content": content,
-        "timestamp": datetime.now(),
-        "id": str(uuid.uuid4())
-    }
-    if metadata:
-        message.update(metadata)
-    st.session_state.current_messages.append(message)
-
 def process_user_question(user_question: str):
     """Process user question based on intent"""
     
-    # Add user message
+    # Add user message using session manager
     add_message("user", user_question)
     
     # Classify user intent
@@ -819,7 +797,7 @@ def process_user_question(user_question: str):
             user_question, sql_query, df, execution_status, success
         )
         
-        # Add assistant response with metadata
+        # Add assistant response with metadata using session manager
         add_message("assistant", nl_response, {
             "sql_query": sql_query,
             "data": df,
@@ -835,20 +813,17 @@ def fetch_failure(log_id: int):
     session = SessionLocal()
     try:
         # Add debugging - check what's actually in the table
-        print(f"Fetching data for log_id: {log_id}")
         
         # First, let's see what columns exist
         columns_result = session.execute(
             text("SELECT column_name FROM information_schema.columns WHERE table_name = 'job_logs'")
         ).fetchall()
-        print(f"Available columns: {[row[0] for row in columns_result]}")
         
         # Check if the record exists at all
         exists_check = session.execute(
             text("SELECT COUNT(*) FROM job_logs WHERE log_id = :id"),
             {"id": log_id}
         ).fetchone()
-        print(f"Records found for log_id {log_id}: {exists_check[0]}")
         
         # Get the actual record
         r = session.execute(
@@ -857,7 +832,6 @@ def fetch_failure(log_id: int):
         ).fetchone()
         
         if r:
-            print(f"Raw result: {dict(r._mapping)}")
             
             # Try to get the specific columns you need
             result = session.execute(
@@ -868,7 +842,6 @@ def fetch_failure(log_id: int):
             if result:
                 data = dict(result._mapping)
                 data["run_timestamp"] = data["run_timestamp"].isoformat()
-                print(f"Processed result: {data}")
                 return data
             else:
                 return {"error": "specific columns not found"}
@@ -876,7 +849,6 @@ def fetch_failure(log_id: int):
             return {"error": "record not found"}
             
     except Exception as e:
-        print(f"Error in fetch_failure: {str(e)}")
         return {"error": f"database error: {str(e)}"}
     finally:
         session.close()
@@ -954,7 +926,9 @@ def explain_incident_agent(log_id: int, language: str = "english") -> str:
     Analyze and explain an incident by fetching log details and providing 
     root cause analysis with resolution steps in the specified language.
     """
-    print(f"DEBUG: Starting analysis for log_id: {log_id} in {language}")
+    
+    # Get conversation history for context
+    conversation_history = get_session_memory()
     
     # Language-specific prompts
     if language == "arabic":
@@ -967,7 +941,8 @@ def explain_incident_agent(log_id: int, language: str = "english") -> str:
             f"2. تحليل رسالة الخطأ\n"
             f"3. شرح السبب الجذري\n"
             f"4. خطوات الحل التفصيلية\n"
-            f"5. الإجراءات الوقائية إن أمكن"
+            f"5. الإجراءات الوقائية إن أمكن\n\n"
+            f"إذا كان هناك تاريخ محادثة سابق، فاستخدمه لفهم السياق وتقديم تحليل أكثر عمقاً."
         )
         analysis_language_instruction = "يرجى تقديم التقرير باللغة العربية."
     else:
@@ -980,21 +955,31 @@ def explain_incident_agent(log_id: int, language: str = "english") -> str:
             f"2. Error message analysis\n"
             f"3. Root cause explanation\n"
             f"4. Detailed resolution steps\n"
-            f"5. Preventive measures if applicable"
+            f"5. Preventive measures if applicable\n\n"
+            f"If there's conversation history, use it to understand context and provide deeper analysis."
         )
         analysis_language_instruction = "Please provide the report in English."
     
     try:
-        print(f"DEBUG: Making first API call...")
+        
+        # Build messages array with conversation history
+        messages = []
+        
+        # Add conversation history for context
+        if conversation_history:
+            messages.extend(conversation_history)
+        
+        # Add current analysis request
+        messages.append({"role": "user", "content": user_msg})
+        
         # First API call with tools
         first_response = co.chat(
             model="command-r-08-2024",
-            messages=[{"role": "user", "content": user_msg}],
+            messages=messages,
             tools=tool_defs,
             temperature=0.1
         )
         
-        print(f"DEBUG: First response received: {hasattr(first_response, 'message')}")
         
         if not hasattr(first_response, 'message') or first_response.message is None:
             return "Error: No response received from the model"
@@ -1002,14 +987,12 @@ def explain_incident_agent(log_id: int, language: str = "english") -> str:
         msg = first_response.message
         tool_calls = getattr(msg, 'tool_calls', None)
         
-        print(f"DEBUG: Tool calls found: {len(tool_calls) if tool_calls else 0}")
         
         if not tool_calls or len(tool_calls) == 0:
             # No tool calls made - return direct response or error
             content = getattr(msg, 'content', '')
             return content if content else f"Model didn't make required tool calls for log_id {log_id}"
         
-        print(f"Processing {len(tool_calls)} tool calls")
         
         # Execute all tool calls and collect results
         tool_results = []
@@ -1053,24 +1036,29 @@ def explain_incident_agent(log_id: int, language: str = "english") -> str:
             tools_summary += f"   Arguments: {tool_info['args']}\n"
             tools_summary += f"   Result: {json.dumps(tool_info['result'], indent=2, default=str)}\n\n"
 
-        # Build complete conversation history
-        conversation = [
-            {"role": "user", "content": user_msg},
-            {
-                "role": "assistant",
-                "content": getattr(msg, 'content', '') or '',
-                "tool_calls": [
-                    {
-                        "id": call.id,
-                        "type": "function", 
-                        "function": {
-                            "name": call.function.name,
-                            "arguments": call.function.arguments
-                        }
-                    } for call in tool_calls
-                ]
-            }
-        ]
+        # Build complete conversation history including the original context
+        conversation = []
+        
+        # Add conversation history for context
+        if conversation_history:
+            conversation.extend(conversation_history)
+        
+        # Add the analysis request
+        conversation.append({"role": "user", "content": user_msg})
+        conversation.append({
+            "role": "assistant",
+            "content": getattr(msg, 'content', '') or '',
+            "tool_calls": [
+                {
+                    "id": call.id,
+                    "type": "function", 
+                    "function": {
+                        "name": call.function.name,
+                        "arguments": call.function.arguments
+                    }
+                } for call in tool_calls
+            ]
+        })
         
         # Add all tool results
         conversation.extend(tool_results)
@@ -1086,6 +1074,7 @@ def explain_incident_agent(log_id: int, language: str = "english") -> str:
                 f"3. تعليمات الحل خطوة بخطوة\n"
                 f"4. الإجراءات الوقائية\n"
                 f"5. أي رؤى إضافية\n\n"
+                f"إذا كان هناك محادثات سابقة حول حوادث مشابهة، فاربط هذا التحليل بالمعرفة السابقة.\n"
                 f"لا تقم بأي استدعاءات أدوات إضافية - فقط قدم تحليلاً مفصلاً باللغة العربية بناءً على البيانات أعلاه. لا تضف عنواناً للتقرير."
             )
         else:
@@ -1098,6 +1087,7 @@ def explain_incident_agent(log_id: int, language: str = "english") -> str:
                 f"3. Step-by-step resolution instructions\n"
                 f"4. Preventive measures\n"
                 f"5. Any additional insights\n\n"
+                f"If there are previous conversations about similar incidents, connect this analysis to prior knowledge.\n"
                 f"Do not make any additional tool calls - just provide a detailed analysis in English based on the data above. Do not add a report header."
             )
         
@@ -1149,23 +1139,21 @@ def explain_incident_agent(log_id: int, language: str = "english") -> str:
         if not final_content or final_content.strip() == '':
             return f"Error: Empty final response. Tool results were: {tools_summary}"
         
-        print(f"DEBUG: Final content length: {len(final_content)}")
-        print(f"DEBUG: Final content preview: {final_content[:200]}...")
         return final_content
         
     except Exception as e:
         import traceback
         error_trace = traceback.format_exc()
-        print(f"DEBUG: Exception occurred: {str(e)}")
         return f"Error in incident analysis: {str(e)}\n\nFull traceback:\n{error_trace}"
 
 def render_sidebar():
     """Render the chat history sidebar"""
     with st.sidebar:
+        # Get current session ID (needed for highlighting current session)
+        session_id = get_or_create_session_id()
+        
         # Get current mode for display
         current_mode = st.session_state.get('current_mode', 'SQL Query Assistant')
-        # mode_emoji = "💬" if "SQL" in current_mode else "🔴"
-        # mode_short = "SQL" if "SQL" in current_mode else "Incident"
         
         # Compact sidebar header with status
         st.markdown(f"""
@@ -1178,106 +1166,76 @@ def render_sidebar():
         
         # Compact new chat button
         if st.button("جديد➕", use_container_width=True, type="primary"):
-            create_new_chat()
+            create_new_chat_session()
             st.rerun()
         
         st.markdown("---")
         
-        # Display chat sessions with more compact styling
-        if st.session_state.chat_sessions:
-            # Get current mode for module-specific chat display
-            current_mode = st.session_state.get('current_mode', 'SQL Query Assistant')
-            module_key = f"{current_mode}_chats"
+        # Display chat sessions
+        all_sessions = load_all_sessions(current_mode)
+        
+        if all_sessions:
+            # Sort sessions by updated time (newest first)
+            sorted_sessions = sorted(
+                all_sessions.items(),
+                key=lambda x: x[1]["updated_at"],
+                reverse=True
+            )
             
-            # Get chats for current module only
-            module_chats = st.session_state.chat_sessions.get(module_key, {})
-            
-            if module_chats:
-                # Sort chats by timestamp (newest first)
-                sorted_chats = sorted(
-                    module_chats.items(),
-                    key=lambda x: x[1]["timestamp"],
-                    reverse=True
-                )
+            # Show only recent 5 sessions for cleaner look
+            for session_id_item, session_data in sorted_sessions[:5]:
+                col1, col2 = st.columns([3.5, 0.5])
                 
-                # Show only recent 5 chats for cleaner look
-                for chat_id, chat_data in sorted_chats[:5]:
-                    col1, col2 = st.columns([3.5, 0.5])
+                with col1:
+                    # Session button with current session highlighting
+                    is_current = session_id_item == session_id
+                    # Truncate title to fit better
+                    title = session_data['title'][:25] + "..." if len(session_data['title']) > 25 else session_data['title']
+                    button_label = f"{'🟢' if is_current else '💭'} {title}"
                     
-                    with col1:
-                        # Chat button with current chat highlighting
-                        is_current = chat_id == st.session_state.current_chat_id
-                        # Truncate title to fit better
-                        title = chat_data['title'][:25] + "..." if len(chat_data['title']) > 25 else chat_data['title']
-                        button_label = f"{'🟢' if is_current else '💭'} {title}"
-                        
-                        if st.button(
-                            button_label,
-                            key=f"chat_{chat_id}",
-                            use_container_width=True,
-                            type="primary" if is_current else "secondary"
-                        ):
-                            if chat_id != st.session_state.current_chat_id:
-                                load_chat(chat_id)
-                                st.rerun()
-                    
-                    with col2:
-                        # Compact delete button
-                        if st.button("🗑", key=f"delete_{chat_id}", help="Delete"):
-                            delete_chat(chat_id)
+                    if st.button(
+                        button_label,
+                        key=f"session_{session_id_item}",
+                        use_container_width=True,
+                        type="primary" if is_current else "secondary"
+                    ):
+                        if session_id_item != session_id:
+                            load_session(session_id_item)
                             st.rerun()
-                    
-                    # Compact timestamp
-                    timestamp_str = chat_data["timestamp"].strftime("%m/%d")
-                    st.markdown(f"<small style='color: rgba(255, 255, 255, 0.5); font-size: 0.7rem;'>{timestamp_str}</small>", unsafe_allow_html=True)
-                    
-                # Show more chats indicator if there are more than 5
-                if len(sorted_chats) > 5:
-                    st.markdown(f"<small style='color: rgba(255, 255, 255, 0.6); text-align: center; display: block;'>+{len(sorted_chats) - 5} more chats</small>", unsafe_allow_html=True)
-            else:
-                # Compact empty state for current module
-                module_name = "SQL" if "SQL" in current_mode else "Incident"
-                st.markdown(f"""
-                <div style="text-align: center; color: rgba(255, 255, 255, 0.6); padding: 1rem 0;">
-                    <p style="margin: 0;">لا توجد محادثات بعد</p>
-                    <small>ابدأ الدردشة</small>
-                </div>
-                """, unsafe_allow_html=True)
+                
+                with col2:
+                    # Compact delete button
+                    if st.button("🗑", key=f"delete_{session_id_item}", help="Delete"):
+                        if delete_session(session_id_item):
+                            st.rerun()
+                
+                # Compact timestamp and message count
+                timestamp_str = session_data["updated_at"].strftime("%m/%d")
+                msg_count = session_data.get("message_count", 0)
+                st.markdown(f"<small style='color: rgba(255, 255, 255, 0.5); font-size: 0.7rem;'>{timestamp_str} • {msg_count} msg</small>", unsafe_allow_html=True)
+                
+            # Show more sessions indicator if there are more than 5
+            if len(sorted_sessions) > 5:
+                st.markdown(f"<small style='color: rgba(255, 255, 255, 0.6); text-align: center; display: block;'>+{len(sorted_sessions) - 5} more sessions</small>", unsafe_allow_html=True)
         else:
-            # Compact empty state
+            # Empty state
             st.markdown("""
             <div style="text-align: center; color: rgba(255, 255, 255, 0.6); padding: 1rem 0;">
-                <p style="margin: 0;">No chats yet</p>
-                <small>Start chatting!</small>
+                <p style="margin: 0;">لا توجد محادثات بعد</p>
+                <small>ابدأ الدردشة لبناء الذاكرة</small>
             </div>
             """, unsafe_allow_html=True)
-
-# def render_footer():
-#     """Render a beautiful footer"""
-#     st.markdown("---")
-#     st.markdown("""
-#     <div style="text-align: center; padding: 2rem 0; color: #6c757d;">
-#         <p style="margin: 0; font-size: 0.9rem;">
-#             🚀 <strong>STC Query Assistant</strong> | 
-#         </p>
-#         <p style="margin: 0.5rem 0 0 0; font-size: 0.8rem;">
-#             Built using Streamlit & Cohere 
-#         </p>
-#     </div>
-#     """, unsafe_allow_html=True)
 
 def main():
     # Set current mode in session state for module-specific chats
     if 'current_mode' not in st.session_state:
         st.session_state.current_mode = mode
     elif st.session_state.current_mode != mode:
-        # Mode changed - save current chat and switch context
-        if st.session_state.get('current_messages'):
-            save_current_chat()
+        # Mode changed - save current session and switch context
+        save_current_session()
         st.session_state.current_mode = mode
-        # Start fresh for the new module
-        st.session_state.current_chat_id = str(uuid.uuid4())
-        st.session_state.current_messages = []
+        # Reset session loaded flag to load correct module
+        st.session_state.session_loaded = False
         # Force page reload on mode switch
         st.rerun()
     
@@ -1328,12 +1286,10 @@ def main():
                         try:
                             with st.spinner(" 🤔 جاري معالجة سؤالك"):
                                 process_user_question(question)
-                            save_current_chat()
                             st.rerun()
                         except Exception as e:
                             st.error(f"❌ Error processing question: {str(e)}")
                             add_message("assistant", f"I encountered an error while processing your question: {str(e)}")
-                            save_current_chat()
                             st.rerun()
             
             st.markdown("---")
@@ -1401,7 +1357,6 @@ def main():
                         st.code(latest["sql_query"], language="sql")
                         st.markdown("</div>", unsafe_allow_html=True)
             
-            save_current_chat()
             st.rerun()
     
     else:
@@ -1518,62 +1473,64 @@ def main():
                 # Set Arabic as default language
                 language = "english" if "English" in report_language else "arabic"
                 
+                # Create user message for the incident analysis request
+                user_message = f"تحليل الحادثة رقم {log_id}" if language == "arabic" else f"Analyze incident log ID {log_id}"
+                add_message("user", user_message, {
+                    "log_id": log_id,
+                    "analysis_language": language,
+                    "incident_type": "pipeline_failure"
+                })
+                
                 with st.spinner('🔄 جاري تحليل الحادث وإنشاء التقرير'):
                     try:
                         explanation = explain_incident_agent(log_id, language)
                         st.markdown('<div style="direction: rtl; text-align: right;">✅ اكتمل التحليل!</div>', unsafe_allow_html=True)
+                        
+                        # Save the assistant response with metadata
+                        add_message("assistant", explanation, {
+                            "log_id": log_id,
+                            "analysis_language": language,
+                            "analysis_type": "incident_report",
+                            "success": True
+                        })
+                        
                     except Exception as e:
-                        st.markdown(f'<div style="direction: rtl; text-align: right;">❌ حدث خطأ أثناء التحليل: {str(e)}</div>', unsafe_allow_html=True)
-                        explanation = f"حدث خطأ: {str(e)}"
+                        error_msg = f'حدث خطأ أثناء التحليل: {str(e)}' if language == "arabic" else f'Error during analysis: {str(e)}'
+                        st.markdown(f'<div style="direction: rtl; text-align: right;">❌ {error_msg}</div>', unsafe_allow_html=True)
+                        explanation = f"حدث خطأ: {str(e)}" if language == "arabic" else f"Error occurred: {str(e)}"
+                        
+                        # Save the error response with metadata
+                        add_message("assistant", explanation, {
+                            "log_id": log_id,
+                            "analysis_language": language,
+                            "analysis_type": "incident_report",
+                            "success": False,
+                            "error": str(e)
+                        })
                 
-                # Display the explanation
-                report_title = "📊 تقرير تحليل الحادثة" if language == "arabic" else "📊 Incident Analysis Report"
-
-                # Add RTL support for Arabic title
-                if language == "arabic":
-                    st.markdown(f'<h3 style="direction: rtl; text-align: right;">{report_title}</h3>', unsafe_allow_html=True)
-                else:
-                    st.markdown(f"### {report_title}")
-
-                if explanation and explanation.strip():
-                    # Check if content is in Arabic
-                    is_arabic = language == "arabic"
-                    
-                    styled_explanation = f"""
-                    <div style="
-                        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-                        padding: 1.5rem;
-                        border-radius: 12px;
-                        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-                        margin: 1rem 0;
-                        direction: {'rtl' if is_arabic else 'ltr'};
-                        text-align: {'right' if is_arabic else 'left'};
-                        border-{'right' if is_arabic else 'left'}: 4px solid #dc3545;
-                        border-{'left' if is_arabic else 'right'}: none;
-                        color: #1a1f36;
-                    ">
-                        {explanation}
-                    </div>
-                    """
-                    
-                    # Render the styled content
-                    st.markdown(styled_explanation, unsafe_allow_html=True)
-                    
-                    # Show character count for debugging
-                    st.caption(f"Report length: {len(explanation)} characters")
-                else:
-                    st.error("❌ No report content was generated")
-                    st.info(f"🔧 Debug info: explanation = '{explanation}' (type: {type(explanation)})")
-                    
-                    # Try to get some basic info manually
-                    st.markdown("**Attempting manual data fetch:**")
-                    try:
-                        failure_data = fetch_failure(log_id)
-                        st.json(failure_data)
-                    except Exception as e:
-                        st.error(f"Manual fetch failed: {str(e)}")
+                # Force rerun to show the new messages in the chat interface
+                st.rerun()
         else:
             st.info("ℹ️ No failed pipeline runs found in the database.")
+        
+        # Display current chat messages for incident analysis
+        st.markdown("---")
+        st.markdown('<h3 style="direction: rtl; text-align: right;">💬 محادثة التحليل</h3>', unsafe_allow_html=True)
+        
+        for message in st.session_state.current_messages:
+            with st.chat_message(message["role"]):
+                # Check if content is in Arabic (simple check for Arabic characters)
+                is_arabic = any('\u0600' <= c <= '\u06FF' for c in message["content"])
+                if is_arabic:
+                    st.markdown(f'<div style="direction: rtl; text-align: right;">{message["content"]}</div>', unsafe_allow_html=True)
+                else:
+                    st.markdown(message["content"])
+                
+                # Show metadata for incident analysis
+                if message["role"] == "assistant" and "analysis_type" in message:
+                    with st.expander("🔍 عرض تفاصيل التحليل" if is_arabic else "🔍 View Analysis Details", expanded=False):
+                        metadata = {k: v for k, v in message.items() if k not in ["role", "content", "timestamp", "id"]}
+                        st.json(metadata)
 
     # Render footer
     # render_footer()
