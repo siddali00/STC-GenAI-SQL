@@ -539,9 +539,34 @@ def generate_contextual_response(user_question: str, intent: str) -> str:
 def execute_sql_query(sql: str) -> tuple[pd.DataFrame, str, bool]:
     """Execute SQL query and return results as DataFrame, status message, and success flag"""
     try:
+        print(f"🔍 Executing SQL: {sql}")
+        
+        # Validate that the input looks like SQL before attempting to execute
+        sql_stripped = sql.strip()
+        sql_keywords = ['SELECT', 'UPDATE', 'INSERT', 'DELETE', 'WITH', 'CREATE', 'DROP', 'ALTER']
+        
+        # Check if the input starts with a SQL keyword
+        if not any(sql_stripped.upper().startswith(keyword) for keyword in sql_keywords):
+            return pd.DataFrame(), f"❌ Error: Received non-SQL input: {sql[:100]}...", False
+        
+        # Check for obvious natural language patterns that shouldn't be in SQL
+        natural_language_patterns = [
+            r'\b(In \d{4}, a total of)\b',  # "In 2023, a total of"
+            r'\b(This is a significant)\b',  # "This is a significant"
+            r'\b(The results show)\b',       # "The results show"
+            r'\b(Based on the data)\b',      # "Based on the data"
+            r'\b(Looking at the)\b',         # "Looking at the"
+        ]
+        
+        for pattern in natural_language_patterns:
+            if re.search(pattern, sql, re.IGNORECASE):
+                return pd.DataFrame(), f"❌ Error: Input appears to be natural language, not SQL: {sql[:100]}...", False
+        
         # Clean SQL (remove markdown formatting if present)
         sql_match = re.search(r'```sql\s*(.*?)\s*```', sql, re.DOTALL)
         clean_sql = sql_match.group(1).strip() if sql_match else sql.strip()
+        
+        print(f"🔍 Clean SQL to execute: {clean_sql}")
         
         session = SessionLocal()
         try:
@@ -560,7 +585,9 @@ def execute_sql_query(sql: str) -> tuple[pd.DataFrame, str, bool]:
             session.close()
             
     except Exception as e:
-        return pd.DataFrame(), f"❌ Error executing SQL: {str(e)}", False
+        error_msg = str(e)
+        print(f"🔍 SQL execution error: {error_msg}")
+        return pd.DataFrame(), f"❌ Error executing SQL: {error_msg}", False
     
 
 def translate_to_english(text: str) -> str:
@@ -616,7 +643,13 @@ def generate_sql_query(user_question: str) -> str:
         last_month = (current_date.replace(day=1) - pd.Timedelta(days=1)).strftime('%B %Y')
         
         system_prompt = (
-            f"""You are a SQL assistant. Given a natural-language question and a database schema, generate a valid PostgreSQL query.
+            f"""You are a SQL generator. Your ONLY job is to generate valid PostgreSQL SQL queries.
+
+            **CRITICAL INSTRUCTIONS**:
+            - You MUST return ONLY SQL code - no explanations, no natural language, no markdown
+            - Do NOT provide any commentary, analysis, or description
+            - Do NOT return results or data - only the SQL query itself
+            - Your response should be executable SQL that starts with SELECT, UPDATE, INSERT, etc.
             
             **CURRENT DATE CONTEXT**:
             - Today's date: {current_date_str}
@@ -680,36 +713,72 @@ def generate_sql_query(user_question: str) -> str:
             - Use proper date filtering with DATE columns
             - Don't assume column names based on the question - use schema column names
             
-            Return ONLY the SQL query, no explanation or markdown formatting."""
+            REMEMBER: Return ONLY the SQL query, nothing else. No explanations, no markdown, no natural language.
+            """
         )
         
-        # Build messages array with conversation history
+        # Build messages array with conversation history but only include SQL-related context
         messages = [{"role": "system", "content": system_prompt}]
         
-        # Add conversation history for context
+        # Add conversation history for context, but filter to only include SQL queries
         if conversation_history:
-            messages.extend(conversation_history)
+            # Only add previous SQL queries for context, not natural language responses
+            sql_context = []
+            for i, msg in enumerate(conversation_history):
+                if msg["role"] == "user":
+                    sql_context.append(msg)
+                elif msg["role"] == "assistant" and i < len(conversation_history) - 1:
+                    # Look for SQL queries in the full messages (which include metadata)
+                    full_messages = st.session_state.get('current_messages', [])
+                    if i < len(full_messages):
+                        full_msg = full_messages[i]
+                        if "sql_query" in full_msg:
+                            sql_context.append({"role": "assistant", "content": f"Previous SQL: {full_msg['sql_query']}"})
+            
+            messages.extend(sql_context[-4:])  # Only last 4 messages for context
         else:
             print("🔍 No conversation history available")
         
-        # Add current question with schema info
-        user_prompt = f"Database Schema:{SCHEMA_INFO}\n Original Question: {user_question}\n English Translation: {english_question}"
+        # Add current question with schema info and very explicit instructions
+        user_prompt = f"""Database Schema:{SCHEMA_INFO}
+
+Original Question: {user_question}
+English Translation: {english_question}
+
+Generate ONLY the SQL query to answer this question. Do not include any explanation, description, or analysis. Return pure SQL code only."""
         messages.append({"role": "user", "content": user_prompt})
         
+        print(f"🔍 Messages being sent to Cohere: {messages}")
         
         resp = co.chat(
             model="command-r-08-2024",
-            messages=messages
+            messages=messages,
+            temperature=0.1  # Lower temperature for more consistent SQL generation
         )
         
         sql = resp.message.content[0].text.strip()
+        print(f"🔍 Raw response from Cohere: {sql}")
+        
         # Remove any markdown formatting
         sql = re.sub(r'```sql\n?|```\n?', '', sql).strip()
         
+        # Validate that the response looks like SQL
+        sql_keywords = ['SELECT', 'UPDATE', 'INSERT', 'DELETE', 'WITH']
+        if not any(sql.upper().startswith(keyword) for keyword in sql_keywords):
+            print(f"⚠️ Warning: Response doesn't look like SQL: {sql}")
+            # Try to extract SQL from the response if it's embedded
+            sql_match = re.search(r'(SELECT.*?)(?:\n\n|\Z)', sql, re.DOTALL | re.IGNORECASE)
+            if sql_match:
+                sql = sql_match.group(1).strip()
+                print(f"🔍 Extracted SQL: {sql}")
+            else:
+                return f"Error: AI returned non-SQL response: {sql[:100]}..."
         
+        print(f"🔍 Final SQL query: {sql}")
         return sql
         
     except Exception as e:
+        print(f"🔍 Exception in generate_sql_query: {str(e)}")
         return f"Error generating SQL: {str(e)}"
 
 def generate_natural_language_response(user_question: str, sql_query: str, df: pd.DataFrame, execution_status: str, success: bool) -> str:
