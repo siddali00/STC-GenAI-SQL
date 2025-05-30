@@ -831,6 +831,8 @@ def generate_natural_language_response(user_question: str, sql_query: str, df: p
         
         system_prompt = (
             """You are a friendly business data analyst. Based on a user's question and the query results, provide a conversational summary of the findings. Be helpful, insightful, and highlight key business insights. Keep it natural and easy to understand. Keep your answer short and to the point. Do not go into depths explaining the data results. Keep it simple and concise. Respond in the language of the user's question.
+
+            Respond in the same langauge as the user's question.
             
             **IMPORTANT FORMATTING RULES**:
             - Provide clean, properly formatted text without any spacing artifacts
