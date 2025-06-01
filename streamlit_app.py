@@ -632,9 +632,6 @@ def generate_sql_query(user_question: str) -> str:
     try:
         # Get conversation history for context
         conversation_history = get_session_memory()
-        print(f"🔍 SQL Generation - Conversation History: {conversation_history}")
-        print(f"🔍 Current Question: {user_question}")
-        print(f"🔍 English Translation: {english_question}")
         
         # Get current date for context
         current_date = datetime.now()
@@ -783,7 +780,17 @@ Generate ONLY the SQL query to answer this question. Do not include any explanat
 
 def generate_natural_language_response(user_question: str, sql_query: str, df: pd.DataFrame, execution_status: str, success: bool) -> str:
     """Generate a natural language response based on the query results with conversation history"""
-    try:
+    try: 
+
+         # 1) Check if the question contains any Arabic‐range character
+        is_arabic = bool(re.search(r'[\u0600-\u06FF]', user_question))
+
+        if is_arabic:
+            language_instruction = "Please respond in Arabic"
+        else:
+            language_instruction = "Please respond in English."
+
+        print(f"🔍 Language instruction: {language_instruction}")
         # Get conversation history for context
         conversation_history = get_session_memory()
         
@@ -830,9 +837,9 @@ def generate_natural_language_response(user_question: str, sql_query: str, df: p
             data_summary += f"Sample data:\n{sample_text}"
         
         system_prompt = (
-            """You are a friendly business data analyst. Based on a user's question and the query results, provide a conversational summary of the findings. Be helpful, insightful, and highlight key business insights. Keep it natural and easy to understand. Keep your answer short and to the point. Do not go into depths explaining the data results. Keep it simple and concise. Respond in the language of the user's question.
+            f"""You are a friendly business data analyst. Based on a user's question and the query results, provide a conversational summary of the findings. Be helpful, insightful, and highlight key business insights. Keep it natural and easy to understand. Keep your answer short and to the point. Do not go into depths explaining the data results. Keep it simple and concise. Respond in the language of the user's question.
 
-            Respond in the same langauge as the user's question.
+            **IMPORTANT: {language_instruction}**
             
             **IMPORTANT FORMATTING RULES**:
             - Provide clean, properly formatted text without any spacing artifacts
@@ -877,6 +884,7 @@ Current Date Context:
 
 Please provide a natural, conversational response summarizing these findings and any business insights. Consider the conversation history to provide contextual analysis. When referring to time periods, be specific about what period was actually analyzed based on the current date context.
 """
+        print(f"🔍 User question: {user_question}")
         messages.append({"role": "user", "content": user_prompt})
         
         resp = co.chat(
